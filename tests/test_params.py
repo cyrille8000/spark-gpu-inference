@@ -6,37 +6,36 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from spark_infer.io_utils import InputError  # noqa: E402
-from spark_infer.params import parse_demucs, parse_task, parse_vc  # noqa: E402
+from spark_infer.params import parse_instrumental, parse_task, parse_vc  # noqa: E402
 
 URL = "https://example.com/a.wav"
 
 
 def test_task_required():
-    assert parse_task({"task": "demucs"}) == "demucs"
+    assert parse_task({"task": "instrumental"}) == "instrumental"
     assert parse_task({"task": "vc"}) == "vc"
     with pytest.raises(InputError):
-        parse_task({"task": "tts"})
+        parse_task({"task": "demucs"})
     with pytest.raises(InputError):
         parse_task({})
 
 
-def test_demucs_defaults():
-    r = parse_demucs({"audio_url": URL})
+def test_instrumental_defaults():
+    r = parse_instrumental({"audio_url": URL})
     assert r.output_format == "mp3" and r.mono is False and r.output_url is None
-    assert r.chunk_size is None and r.overlap == 0.0001 and r.single_onnx is False
 
 
-def test_demucs_validation():
+def test_instrumental_validation():
     with pytest.raises(InputError):
-        parse_demucs({})
+        parse_instrumental({})
     with pytest.raises(InputError):
-        parse_demucs({"audio_url": "ftp://x/y"})
+        parse_instrumental({"audio_url": "ftp://x/y"})
     with pytest.raises(InputError):
-        parse_demucs({"audio_url": URL, "output_format": "flac"})
+        parse_instrumental({"audio_url": URL, "output_format": "flac"})
     with pytest.raises(InputError):
-        parse_demucs({"audio_url": URL, "chunk_size": 10})
-    r = parse_demucs({"audio_url": URL, "output_url": URL, "mono": "true", "vram_gb": "24", "chunk_size": 300000})
-    assert r.mono is True and r.vram_gb == 24.0 and r.chunk_size == 300000
+        parse_instrumental({"audio_url": URL, "mono": "peut-être"})
+    r = parse_instrumental({"audio_url": URL, "output_url": URL, "mono": "true", "output_format": "WAV"})
+    assert r.mono is True and r.output_url == URL and r.output_format == "wav"
 
 
 def test_vc_defaults_and_ref_url_alias():

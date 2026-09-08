@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 from .io_utils import InputError, check_url
 
-TASKS = ("demucs", "vc")
+TASKS = ("instrumental", "vc")
 OUTPUT_FORMATS = ("wav", "mp3")
 MAX_REFS = 8
 
@@ -78,15 +78,11 @@ class VcParams:
 
 
 @dataclass
-class DemucsRequest:
+class InstrumentalRequest:
     audio_url: str
     output_url: str | None
     output_format: str
     mono: bool
-    chunk_size: int | None
-    vram_gb: float | None
-    overlap: float
-    single_onnx: bool
 
 
 @dataclass
@@ -100,16 +96,12 @@ class VcRequest:
     params: VcParams = field(default_factory=VcParams)
 
 
-def parse_demucs(inp: dict) -> DemucsRequest:
-    return DemucsRequest(
+def parse_instrumental(inp: dict) -> InstrumentalRequest:
+    return InstrumentalRequest(
         audio_url=check_url(inp.get("audio_url"), "audio_url"),
         output_url=_output_url(inp),
         output_format=_output_format(inp, "mp3"),
         mono=_bool(inp, "mono", False),
-        chunk_size=_int(inp, "chunk_size", 50_000, 5_000_000, None),
-        vram_gb=_float(inp, "vram_gb", 1, 200, None),
-        overlap=_float(inp, "overlap", 0.0, 0.99, 0.0001),  # type: ignore[arg-type]
-        single_onnx=_bool(inp, "single_onnx", False),
     )
 
 

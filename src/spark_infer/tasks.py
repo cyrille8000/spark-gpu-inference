@@ -13,17 +13,16 @@ import numpy as np
 import soundfile as sf
 
 from . import registry
-from .audio_utils import chunk_size_for_vram, is_cuda_oom, next_chunk_size, to_stereo
+from .audio_utils import is_cuda_oom
 from .io_utils import InputError, decode_to_wav, deliver, download, encode_output, ffprobe_duration
-from .params import DemucsRequest, VcRequest, parse_demucs, parse_task, parse_vc
+from .params import InstrumentalRequest, VcRequest, parse_instrumental, parse_task, parse_vc
 
 log = logging.getLogger("spark.tasks")
 
 MODELS_DIR = Path(os.environ.get("SPARK_MODELS_DIR", "/models"))
-DEMUCS_DIR = MODELS_DIR / "demucs"
+BSROFORMER_DIR = Path(os.environ.get("BS_ROFORMER_MODELS_PATH", str(MODELS_DIR / "bsroformer")))
 CHATTERBOX_DIR = MODELS_DIR / "chatterbox"
 ECAPA_DIR = MODELS_DIR / "ecapa"
-MAX_OOM_ATTEMPTS = 6
 
 Progress = Callable[[dict], None]
 
@@ -33,8 +32,8 @@ def run_task(inp: dict, job_id: str, progress: Progress) -> dict:
     workdir = Path(tempfile.mkdtemp(prefix=f"spark-{task}-", dir=os.environ.get("SPARK_TMPDIR") or None))
     t0 = time.monotonic()
     try:
-        if task == "demucs":
-            result = _run_demucs(parse_demucs(inp), workdir, job_id, progress)
+        if task == "instrumental":
+            result = _run_instrumental(parse_instrumental(inp), workdir, job_id, progress)
         else:
             result = _run_vc(parse_vc(inp), workdir, job_id, progress)
         result.update({"status": "completed", "task": task, "job_id": job_id,
@@ -45,71 +44,61 @@ def run_task(inp: dict, job_id: str, progress: Progress) -> dict:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
-# ============================================================ DEMUCS
+def _with_oom_retry(job_id: str, what: str, fn: Callable[[], object]) -> tuple[object, int]:
+    """Exécute `fn` ; sur OOM CUDA, libère tous les modèles résidents et rejoue une fois."""
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            return fn(), attempts
+        except Exception as e:  # noqa: BLE001
+            if not is_cuda_oom(e) or attempts >= 2:
+                raise
+            log.warning("[%s] OOM en %s → libération des modèles et 2e essai", job_id, what)
+            registry.release()
 
-def _load_separator(chunk: int, overlap: float, single_onnx: bool):
-    from .demucs_engine import InstrumentalSeparator
 
-    key = f"demucs:{'single' if single_onnx else 'ensemble'}"
-    sep = registry.get(key, lambda: InstrumentalSeparator(
-        DEMUCS_DIR, registry.device(), chunk_size=chunk, overlap=overlap, single_onnx=single_onnx))
-    sep.chunk_size = chunk          # simples attributs lus au moment du demix
-    sep.overlap = min(0.99, max(0.0, overlap))
-    return sep
+# ============================================================ INSTRUMENTAL (BS-Roformer Leap Xe)
+
+def _load_separator():
+    from .separation_engine import InstrumentalSeparator
+
+    return registry.get("bs_roformer_leap_xe", lambda: InstrumentalSeparator(BSROFORMER_DIR, registry.device()))
 
 
-def _run_demucs(req: DemucsRequest, workdir: Path, job_id: str, progress: Progress) -> dict:
-    from .demucs_engine import SAMPLE_RATE
-    import librosa
+def _run_instrumental(req: InstrumentalRequest, workdir: Path, job_id: str, progress: Progress) -> dict:
+    from .separation_engine import MODEL_SLUG, SAMPLE_RATE
 
     def report(pct: int, msg: str) -> None:
-        progress({"task": "demucs", "percent": pct, "message": msg})
+        progress({"task": "instrumental", "percent": pct, "message": msg})
 
     raw = workdir / "input.bin"
     download(req.audio_url, raw)
-    src_wav = decode_to_wav(raw, workdir / "input.wav")
-    duration = ffprobe_duration(src_wav)
+    # le modèle travaille en 44,1 kHz stéréo : ffmpeg décode et rééchantillonne (soxr) en une passe
+    mix_wav = decode_to_wav(raw, workdir / "mix.wav", sr=SAMPLE_RATE, channels=2)
+    duration = ffprobe_duration(mix_wav)
+    if duration <= 0:
+        raise InputError("audio vide ou illisible")
     report(5, f"audio décodé ({duration:.1f} s)")
 
-    # même chargement que l'image actuelle : librosa → 44,1 kHz stéréo (rééchantillonnage soxr)
-    audio, _sr = librosa.load(str(src_wav), sr=SAMPLE_RATE, mono=False)
-    mix = to_stereo(audio.T if audio.ndim == 2 else audio)
-    del audio
+    def separate():
+        sep = _load_separator()
+        report(10, "séparation BS-Roformer")
+        return sep.separate(mix_wav, workdir)
 
-    chunk = req.chunk_size or chunk_size_for_vram(req.vram_gb or registry.vram_total_gb())
-    attempts = 0
-    instrumental: np.ndarray | None = None
-    while instrumental is None:
-        attempts += 1
-        try:
-            sep = _load_separator(chunk, req.overlap, req.single_onnx)
-            log.info("[%s] séparation : chunk=%d tentative=%d", job_id, chunk, attempts)
-            instrumental = sep.separate(mix, progress=lambda p: report(5 + int(p * 0.85), "séparation"))
-        except Exception as e:  # noqa: BLE001
-            if not is_cuda_oom(e) or attempts >= MAX_OOM_ATTEMPTS:
-                raise
-            registry.release()
-            smaller = next_chunk_size(chunk)
-            if smaller is None:
-                raise RuntimeError("OOM au chunk minimum : audio trop long pour ce GPU") from e
-            log.warning("[%s] OOM avec chunk=%d → %d", job_id, chunk, smaller)
-            chunk = smaller
-
-    out_wav = workdir / "instrumental_f32.wav"
-    sf.write(out_wav, instrumental, SAMPLE_RATE, subtype="FLOAT")
-    del instrumental, mix
-    report(92, "encodage")
+    inst_wav, attempts = _with_oom_retry(job_id, "séparation", separate)
+    report(90, "encodage")
 
     out_path = workdir / f"instrumental.{req.output_format}"
-    encode_output(out_wav, out_path, req.output_format, req.mono)
+    encode_output(Path(inst_wav), out_path, req.output_format, req.mono)
     delivered = deliver(out_path, req.output_url, req.output_format)
     report(100, "terminé")
     return {
         **delivered,
+        "model": MODEL_SLUG,
         "duration_s": round(duration, 3),
         "sample_rate": SAMPLE_RATE,
         "channels": 1 if req.mono else 2,
-        "chunk_size": chunk,
         "attempts": attempts,
     }
 
@@ -142,19 +131,12 @@ def _run_vc(req: VcRequest, workdir: Path, job_id: str, progress: Progress) -> d
         raise InputError("source vide ou illisible")
     report(5, "entrées décodées")
 
-    attempts = 0
-    while True:
-        attempts += 1
-        try:
-            vc = _load_converter()
-            wav, sr, meta = vc.run(source, refs, prompt, req.params, workdir,
-                                   progress=lambda p, m: report(5 + int(p * 0.85), m))
-            break
-        except Exception as e:  # noqa: BLE001
-            if not is_cuda_oom(e) or attempts >= 2:
-                raise
-            log.warning("[%s] OOM en conversion vocale → libération des modèles et 2e essai", job_id)
-            registry.release()
+    def convert():
+        vc = _load_converter()
+        return vc.run(source, refs, prompt, req.params, workdir,
+                      progress=lambda p, m: report(5 + int(p * 0.85), m))
+
+    (wav, sr, meta), attempts = _with_oom_retry(job_id, "conversion vocale", convert)
 
     if req.output_sr and req.output_sr != sr:
         wav = librosa.resample(wav, orig_sr=sr, target_sr=req.output_sr, res_type="soxr_hq")

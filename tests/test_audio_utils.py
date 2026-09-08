@@ -5,23 +5,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from spark_infer.audio_utils import (  # noqa: E402
-    MAX_CHUNK_SIZE, MIN_CHUNK_SIZE, chunk_size_for_vram, crossfade_append, fit_length,
-    is_cuda_oom, next_chunk_size, preprocess_source, to_stereo,
-)
-
-
-def test_chunk_size_follows_platform_formula():
-    assert chunk_size_for_vram(None) == MIN_CHUNK_SIZE
-    assert chunk_size_for_vram(24) == int((24 - 4) * 60_000 * 0.9)
-    assert chunk_size_for_vram(4) == max(MIN_CHUNK_SIZE, int(1 * 60_000 * 0.9))
-    assert chunk_size_for_vram(500) == MAX_CHUNK_SIZE
-
-
-def test_next_chunk_size_stops_at_minimum():
-    assert next_chunk_size(1_000_000) == 950_000
-    assert next_chunk_size(MIN_CHUNK_SIZE + 10) == MIN_CHUNK_SIZE
-    assert next_chunk_size(MIN_CHUNK_SIZE) is None
+from spark_infer.audio_utils import crossfade_append, fit_length, is_cuda_oom, preprocess_source  # noqa: E402
 
 
 def test_is_cuda_oom():
@@ -46,12 +30,6 @@ def test_fit_length():
     assert len(fit_length(x, 4)) == 4
     padded = fit_length(x, 15)
     assert len(padded) == 15 and padded[-1] == 0.0
-
-
-def test_to_stereo():
-    assert to_stereo(np.zeros(5)).shape == (5, 2)
-    assert to_stereo(np.zeros((5, 1))).shape == (5, 2)
-    assert to_stereo(np.zeros((5, 6))).shape == (5, 2)
 
 
 def test_preprocess_source_keeps_length_and_range():

@@ -2,8 +2,8 @@
 """Handler RunPod Serverless — Spark GPU Inference.
 
 Une image, deux tâches choisies par `input.task` :
-  - "demucs" : séparation instrumentale (mix - voix), ensemble htdemucs_ft + MDX-Net Kim
-  - "vc"     : conversion de timbre Chatterbox VC (S3Gen) avec best-of-N
+  - "instrumental" : instrumental seul, BS-Roformer Leap Xe (unwa) via bs-roformer-infer
+  - "vc"           : conversion de timbre Chatterbox VC (S3Gen) avec best-of-N
 
 Les modèles restent résidents entre deux jobs du même worker (chargés à la première demande).
 Voir README.md pour le contrat d'entrée/sortie complet.

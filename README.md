@@ -2,13 +2,15 @@
 
 Une seule image, deux tâches choisies par le paramètre `task` du job :
 
-| `task` | Ce que ça fait | Modèles embarqués |
-|--------|----------------|-------------------|
-| `demucs` | Instrumental seul (mix − voix). Même ensemble que la plateforme sur le chemin `--only_vocals` : htdemucs_ft (modèle « vocals ») + Kim_Vocal_2 + Kim_Inst (MDX-Net), pondérés 12/8/3. | `04573f0d-f3cf25b2.th`, `Kim_Vocal_2.onnx`, `Kim_Inst.onnx` |
+| `task` | Ce que ça fait | Modèle embarqué |
+|--------|----------------|-----------------|
+| `instrumental` | Instrumental seul. **BS-Roformer Leap Xe** (unwa, juin 2026) : un seul checkpoint entraîné directement sur la cible instrumentale, 18,07 dB SDR instrumental sur le Multisong de MVSEP, au-dessus des ensembles internes du site. | `pcunwa/BS-Roformer-Leap` → `Xe/bs_leap_xe_inst.ckpt` (268 MB), chargé par [bs-roformer-infer](https://github.com/openmirlab/bs-roformer-infer) (MIT) avec sha256 vérifié |
 | `vc` | Conversion de timbre Chatterbox VC (S3Gen) : timbre moyenné sur 1..8 clips de référence, prompt phonétique optionnel, pas / temperature / CFG réglables, complétion de la queue, best-of-N départagé par similarité de locuteur. | `ResembleAI/chatterbox` (`s3gen.safetensors`, `conds.pt`) + ECAPA `speechbrain/spkrec-ecapa-voxceleb` |
 
-Tous les poids sont dans l'image (`/models`). À l'inférence, `HF_HUB_OFFLINE=1` : **aucun téléchargement de modèle**.
-Les modèles restent résidents entre deux jobs d'un même worker (chargés à la première demande).
+Tous les poids sont dans l'image (`/models`). À l'inférence, `HF_HUB_OFFLINE=1` et le checkpoint BS-Roformer est
+résolu localement : **aucun téléchargement de modèle**. Les modèles restent résidents entre deux jobs d'un même worker.
+
+Base `python:3.11-slim` + torch 2.6.0 cu124 : les roues torch embarquent CUDA/cuDNN, seul le pilote de l'hôte est requis.
 
 ## Contrat d'entrée
 
@@ -16,27 +18,24 @@ Commun aux deux tâches :
 
 | Champ | Type | Défaut | Rôle |
 |-------|------|--------|------|
-| `task` | `"demucs"` \| `"vc"` | — | obligatoire |
+| `task` | `"instrumental"` \| `"vc"` | — | obligatoire |
 | `output_url` | URL | — | PUT présigné (R2/S3). Sans lui, le résultat revient en `audio_base64` (≤ 10 MB) |
-| `output_format` | `"wav"` \| `"mp3"` | `mp3` (demucs) / `wav` (vc) | MP3 = libmp3lame VBR `-q:a 2` (comme la plateforme) |
+| `output_format` | `"wav"` \| `"mp3"` | `mp3` (instrumental) / `wav` (vc) | MP3 = libmp3lame VBR `-q:a 2` (comme la plateforme) |
 
-### `task: "demucs"`
+### `task: "instrumental"`
 
 ```json
-{ "input": { "task": "demucs", "audio_url": "https://…", "output_url": "https://…(PUT)",
+{ "input": { "task": "instrumental", "audio_url": "https://…", "output_url": "https://…(PUT)",
              "output_format": "mp3", "mono": true } }
 ```
 
 | Champ | Défaut | Rôle |
 |-------|--------|------|
-| `audio_url` | — | n'importe quel conteneur/codec (décodé par ffmpeg) |
+| `audio_url` | — | n'importe quel conteneur/codec (décodé et rééchantillonné en 44,1 kHz stéréo par ffmpeg) |
 | `mono` | `false` | mixage mono en sortie |
-| `chunk_size` | auto (VRAM) | chunk ONNX ; sinon `(VRAM − 4 GB) × 60 000 × 0,9`, borné [50 000 ; 5 000 000] |
-| `vram_gb` | détectée | force la VRAM prise en compte pour `chunk_size` |
-| `overlap` | `0.0001` | recouvrement (valeur de la plateforme) |
-| `single_onnx` | `false` | n'utiliser que Kim_Vocal_2 (moins de VRAM, moins bon) |
 
-Sur OOM CUDA : libération des modèles, chunk réduit de 50 000, jusqu'à 6 tentatives.
+Découpage fenêtré du modèle : chunks de 881 559 échantillons (20 s), recouvrement 2, fondu aux jonctions.
+Sur OOM CUDA : libération des modèles résidents puis un second essai.
 
 ### `task: "vc"`
 
@@ -67,19 +66,20 @@ Le scorer WER (Whisper large-v3) et `resemble-enhance` du script d'essai ne sont
 ## Sortie
 
 ```json
-{ "status": "completed", "task": "vc", "job_id": "…", "elapsed_s": 12.3,
-  "format": "wav", "bytes": 480044, "sha256": "…", "uploaded": true,
-  "duration_s": 10.0, "sample_rate": 24000, "channels": 1,
-  "n": 4, "best_run": 2, "runs": [{ "run": 1, "seed": 1000, "similarity": 0.71, "tail_passes": 0 }, …],
-  "warnings": [], "device": "cuda", "models_loaded": ["chatterbox_vc"] }
+{ "status": "completed", "task": "instrumental", "job_id": "…", "elapsed_s": 12.3,
+  "model": "roformer-model-bs-roformer-leap-xe-instrumental-by-pcunwa",
+  "format": "mp3", "bytes": 480044, "sha256": "…", "uploaded": true,
+  "duration_s": 180.0, "sample_rate": 44100, "channels": 1, "attempts": 1,
+  "device": "cuda", "models_loaded": ["bs_roformer_leap_xe"] }
 ```
 
+Pour `vc` s'ajoutent `n`, `best_run`, `runs[]` (seed, similarité, complétions de queue) et `warnings[]`.
 Erreurs : `{ "error": "…", "code": "bad_input" | "internal", "job_id": "…" }`. Une `bad_input` ne doit jamais être rejouée.
 
 ## Build, CI, déploiement
 
-- **CI** : `.github/workflows/docker-build.yml` — push sur `main` (ou lancement manuel) → `ghcr.io/<owner>/spark-gpu-inference:latest` et `:sha-<commit>`. Le build télécharge les poids (≈ 0,7 GB Demucs + 1 GB Chatterbox + 0,1 GB ECAPA) et exécute `scripts/smoke_test.py` **hors ligne sur CPU** : l'image n'est publiée que si chaque modèle se charge depuis les poids embarqués.
-- **RunPod** : endpoint serverless, image `ghcr.io/<owner>/spark-gpu-inference:latest` (le package GHCR doit être public, ou renseigner les identifiants de registre dans RunPod), GPU 16 GB minimum (24 GB confortable pour garder Demucs et Chatterbox résidents), disque conteneur ≥ 20 GB. Aucune variable d'environnement requise.
+- **CI** : `.github/workflows/docker-build.yml` — push sur `main` (ou lancement manuel) → `ghcr.io/<owner>/spark-gpu-inference:latest` et `:sha-<commit>`. Le build télécharge les poids (≈ 0,27 GB BS-Roformer + 1 GB Chatterbox + 0,1 GB ECAPA) et exécute `scripts/smoke_test.py` **hors ligne sur CPU** : chargement de chaque modèle et une vraie passe avant BS-Roformer sur 2 s de bruit. L'image n'est publiée que si tout passe.
+- **RunPod** : endpoint serverless, image `ghcr.io/<owner>/spark-gpu-inference:latest` (le package GHCR doit être public, ou renseigner les identifiants de registre dans RunPod), GPU 16 GB minimum (24 GB confortable pour garder les deux modèles résidents), disque conteneur ≥ 15 GB. Aucune variable d'environnement requise.
 - **Local** :
 
 ```bash
@@ -97,12 +97,11 @@ handler.py                       # entrée RunPod : dispatch par task, erreurs t
 src/spark_infer/
 ├── params.py                    # validation des entrées (pure)
 ├── tasks.py                     # téléchargement → modèle → encodage → livraison, rejeu OOM
-├── demucs_engine.py             # InstrumentalSeparator (chemin --only_vocals de la plateforme)
-├── mdx_net.py                   # MDX-Net copié tel quel de mvsep/inference_demucs.py
+├── separation_engine.py         # InstrumentalSeparator (BS-Roformer Leap Xe via BSRoformerSession)
 ├── vc_engine.py                 # VoiceConverter (Chatterbox réglé + best-of-N ECAPA)
 ├── registry.py                  # modèles résidents, libération sur OOM
 ├── io_utils.py                  # HTTP, ffmpeg, PUT présigné, base64
-└── audio_utils.py               # fonctions pures (chunk VRAM, prétraitement, fondu)
-scripts/fetch_weights.py         # build : poids Chatterbox + ECAPA
-scripts/smoke_test.py            # build : chargement hors ligne de chaque modèle
+└── audio_utils.py               # fonctions pures (prétraitement, fondu)
+scripts/fetch_weights.py         # build : poids BS-Roformer + Chatterbox + ECAPA
+scripts/smoke_test.py            # build : chargement hors ligne + passe avant BS-Roformer
 ```

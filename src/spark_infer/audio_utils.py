@@ -8,30 +8,6 @@ from scipy.signal import butter, sosfilt
 
 log = logging.getLogger("spark.audio")
 
-# --- Taille de chunk MDX en fonction de la VRAM (formule reprise de demucs-separate) ---
-MODEL_OVERHEAD_GB = 4
-SAMPLES_PER_GB = 60_000
-SAFETY_MARGIN = 0.9
-MIN_CHUNK_SIZE = 50_000
-MAX_CHUNK_SIZE = 5_000_000
-CHUNK_REDUCTION = 50_000
-
-
-def chunk_size_for_vram(vram_gb: float | None) -> int:
-    """Chunk ONNX initial pour une VRAM donnée (None → minimum sûr)."""
-    if not vram_gb or vram_gb <= 0:
-        return MIN_CHUNK_SIZE
-    available = max(1.0, float(vram_gb) - MODEL_OVERHEAD_GB)
-    chunk = int(available * SAMPLES_PER_GB * SAFETY_MARGIN)
-    return max(MIN_CHUNK_SIZE, min(MAX_CHUNK_SIZE, chunk))
-
-
-def next_chunk_size(current: int) -> int | None:
-    """Chunk réduit après un OOM ; None si on est déjà au minimum."""
-    if current <= MIN_CHUNK_SIZE:
-        return None
-    return max(MIN_CHUNK_SIZE, current - CHUNK_REDUCTION)
-
 
 def is_cuda_oom(exc: BaseException) -> bool:
     name = type(exc).__name__
@@ -76,13 +52,3 @@ def fit_length(x: np.ndarray, n: int) -> np.ndarray:
     if len(x) >= n:
         return x[:n]
     return np.pad(x, (0, n - len(x)))
-
-
-def to_stereo(audio: np.ndarray) -> np.ndarray:
-    """(samples,) ou (samples, ch) → (samples, 2) float32."""
-    audio = np.asarray(audio, dtype=np.float32)
-    if audio.ndim == 1:
-        return np.stack([audio, audio], axis=1)
-    if audio.shape[1] == 1:
-        return np.repeat(audio, 2, axis=1)
-    return audio[:, :2]

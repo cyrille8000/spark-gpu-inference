@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Vérification de build (CPU, HORS LIGNE) : chaque modèle se charge depuis les poids embarqués,
-les points d'accroche que le moteur VC règle existent bien dans cette version de Chatterbox."""
+BS-Roformer fait une vraie passe avant, et les points d'accroche réglés par le moteur VC existent."""
 from __future__ import annotations
 
 import inspect
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 os.environ["HF_HUB_OFFLINE"] = "1"
@@ -15,22 +16,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 MODELS = Path(os.environ.get("SPARK_MODELS_DIR", "/models"))
 
 
-def check_demucs() -> None:
-    import onnxruntime as ort
-    from demucs.states import load_model
+def check_bsroformer() -> None:
+    import numpy as np
+    import soundfile as sf
 
-    from spark_infer.demucs_engine import WEIGHTS
+    from spark_infer.separation_engine import SAMPLE_RATE, InstrumentalSeparator
+    from spark_infer.tasks import BSROFORMER_DIR
 
-    d = MODELS / "demucs"
-    for name in WEIGHTS:
-        size = (d / name).stat().st_size
-        assert size > 10_000_000, f"{name} trop petit ({size})"
-        print(f"[demucs] {name}: {size / 1e6:.1f} MB")
-    model = load_model(str(d / WEIGHTS[0]))
-    assert list(model.sources)[3] == "vocals", model.sources
-    for onnx in WEIGHTS[1:]:
-        ort.InferenceSession(str(d / onnx), providers=["CPUExecutionProvider"])
-    print(f"[demucs] OK — providers onnxruntime : {ort.get_available_providers()}")
+    sep = InstrumentalSeparator(BSROFORMER_DIR, device="cpu")
+    # 2 s de bruit stéréo : prouve que config + checkpoint + passe avant sont cohérents
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        rng = np.random.default_rng(0)
+        mix = (0.1 * rng.standard_normal((2 * SAMPLE_RATE, 2))).astype(np.float32)
+        sf.write(tmp / "mix.wav", mix, SAMPLE_RATE, subtype="FLOAT")
+        out = sep.separate(tmp / "mix.wav", tmp)
+        y, sr = sf.read(out, dtype="float32")
+        assert sr == SAMPLE_RATE and y.shape == mix.shape, (sr, y.shape, mix.shape)
+        assert np.isfinite(y).all()
+    print(f"[bsroformer] OK — stem={sep.stem} chunk={sep.chunk_size} overlap={sep.num_overlap}")
 
 
 def check_chatterbox() -> None:
@@ -53,17 +57,18 @@ def check_ecapa() -> None:
 
 
 def check_runtime() -> None:
-    import runpod  # noqa: F401
+    import runpod
     import torch
 
-    from spark_infer import tasks  # noqa: F401 — importe la chaîne complète
+    from spark_infer import tasks
 
-    print(f"[runtime] torch {torch.__version__} cuda_build={torch.version.cuda} runpod OK")
+    assert hasattr(runpod.serverless, "start") and hasattr(tasks, "run_task")
+    print(f"[runtime] python {sys.version.split()[0]} torch {torch.__version__} cuda_build={torch.version.cuda}")
 
 
 if __name__ == "__main__":
     check_runtime()
-    check_demucs()
+    check_bsroformer()
     check_chatterbox()
     check_ecapa()
     print("[smoke_test] tout est chargeable hors ligne")
