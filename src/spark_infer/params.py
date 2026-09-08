@@ -65,14 +65,13 @@ def _output_url(inp: dict) -> str | None:
 
 @dataclass
 class VcParams:
-    n: int = 1                 # tirages (best-of-N)
-    steps: int = 20            # pas du flow matching (n_cfm_timesteps)
+    steps: int = 25            # pas du flow matching (n_cfm_timesteps) — choix propriétaire 2026-09-09
     temp: float = 0.8          # temperature du décodeur
     cfg: float | None = None   # inference_cfg_rate (None = valeur du checkpoint)
     ref_len: float = 10.0      # longueur du prompt de référence (s)
     overlap: float = 1.0       # recouvrement du fondu de queue (s)
     preproc: bool = True       # passe-haut + sonie -23 LUFS sur la source
-    seed: int = 1000           # graine du 1er tirage (seed + i pour le tirage i)
+    seed: int = 1000           # graine du tirage (résultat reproductible)
     max_tail_passes: int = 5   # complétions de queue max
     tail_tolerance_s: float = 0.15
 
@@ -116,8 +115,7 @@ def parse_vc(inp: dict) -> VcRequest:
     refs = [check_url(u, f"ref_urls[{i}]") for i, u in enumerate(refs)]
     prompt = inp.get("prompt_url")
     params = VcParams(
-        n=_int(inp, "n", 1, 8, 1),  # type: ignore[arg-type]
-        steps=_int(inp, "steps", 1, 64, 20),  # type: ignore[arg-type]
+        steps=_int(inp, "steps", 1, 64, 25),  # type: ignore[arg-type]
         temp=_float(inp, "temp", 0.0, 2.0, 0.8),  # type: ignore[arg-type]
         cfg=_float(inp, "cfg", 0.0, 3.0, None),
         ref_len=_float(inp, "ref_len", 1.0, 30.0, 10.0),  # type: ignore[arg-type]

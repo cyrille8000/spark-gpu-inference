@@ -42,7 +42,7 @@ def test_vc_defaults_and_ref_url_alias():
     r = parse_vc({"source_url": URL, "ref_url": URL})
     assert r.ref_urls == [URL] and r.prompt_url is None and r.output_format == "wav"
     p = r.params
-    assert (p.n, p.steps, p.temp, p.cfg, p.ref_len, p.overlap, p.preproc, p.seed) == (1, 20, 0.8, None, 10.0, 1.0, True, 1000)
+    assert (p.steps, p.temp, p.cfg, p.ref_len, p.overlap, p.preproc, p.seed) == (25, 0.8, None, 10.0, 1.0, True, 1000)
 
 
 def test_vc_validation():
@@ -53,11 +53,9 @@ def test_vc_validation():
     with pytest.raises(InputError):
         parse_vc({"source_url": URL, "ref_urls": [URL] * 9})
     with pytest.raises(InputError):
-        parse_vc({"source_url": URL, "ref_urls": [URL], "n": 0})
-    with pytest.raises(InputError):
         parse_vc({"source_url": URL, "ref_urls": [URL], "steps": "vingt"})
-    r = parse_vc({"source_url": URL, "ref_urls": [URL, URL], "prompt_url": URL, "n": 4,
+    r = parse_vc({"source_url": URL, "ref_urls": [URL, URL], "prompt_url": URL,
                   "steps": 30, "temp": 0.6, "cfg": 0.7, "ref_len": 8, "preproc": False,
                   "output_format": "mp3", "output_sr": 44100})
     assert len(r.ref_urls) == 2 and r.prompt_url == URL and r.output_sr == 44100
-    assert r.params.n == 4 and r.params.cfg == 0.7 and r.params.preproc is False
+    assert r.params.steps == 30 and r.params.cfg == 0.7 and r.params.preproc is False

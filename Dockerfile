@@ -1,7 +1,7 @@
 # =============================================================================
 # Spark GPU Inference — RunPod Serverless
 #   task "instrumental" : BS-Roformer Leap Xe (unwa) — instrumental seul
-#   task "vc"           : conversion de timbre Chatterbox VC (S3Gen) + scorer ECAPA
+#   task "vc"           : conversion de timbre Chatterbox VC (S3Gen), un tirage
 # Tout est embarqué au build (paquets + poids) : zéro téléchargement à l'inférence.
 # Base Python pure : les roues torch cu124 embarquent leurs bibliothèques CUDA/cuDNN,
 # seul le pilote de l'hôte RunPod est nécessaire.
@@ -45,7 +45,7 @@ RUN set +e; pip check > /tmp/pipcheck.txt; set -e; cat /tmp/pipcheck.txt; \
     if grep -v '^chatterbox-tts ' /tmp/pipcheck.txt | grep -q ' requires '; then \
         echo 'Conflit de dépendances (hors gradio de chatterbox-tts)'; exit 1; fi
 
-# ---------------------------------------------------------------- [4/5] poids : BS-Roformer Leap Xe (sha256 vérifié) + Chatterbox VC + ECAPA
+# ---------------------------------------------------------------- [4/5] poids : BS-Roformer Leap Xe (sha256 vérifié) + Chatterbox VC
 COPY scripts/fetch_weights.py /app/scripts/fetch_weights.py
 RUN python /app/scripts/fetch_weights.py \
     && rm -rf /models/hf/hub/.locks /models/chatterbox/.cache \

@@ -22,7 +22,6 @@ log = logging.getLogger("spark.tasks")
 MODELS_DIR = Path(os.environ.get("SPARK_MODELS_DIR", "/models"))
 BSROFORMER_DIR = Path(os.environ.get("BS_ROFORMER_MODELS_PATH", str(MODELS_DIR / "bsroformer")))
 CHATTERBOX_DIR = MODELS_DIR / "chatterbox"
-ECAPA_DIR = MODELS_DIR / "ecapa"
 
 Progress = Callable[[dict], None]
 
@@ -108,8 +107,7 @@ def _run_instrumental(req: InstrumentalRequest, workdir: Path, job_id: str, prog
 def _load_converter():
     from .vc_engine import VoiceConverter
 
-    return registry.get("chatterbox_vc", lambda: VoiceConverter(
-        CHATTERBOX_DIR, registry.device(), ecapa_dir=ECAPA_DIR if ECAPA_DIR.is_dir() else None))
+    return registry.get("chatterbox_vc", lambda: VoiceConverter(CHATTERBOX_DIR, registry.device()))
 
 
 def _fetch_wav(url: str, workdir: Path, name: str) -> Path:

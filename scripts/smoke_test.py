@@ -48,14 +48,6 @@ def check_chatterbox() -> None:
           f"meanflow={getattr(vc.s3gen, 'meanflow', None)}")
 
 
-def check_ecapa() -> None:
-    from speechbrain.inference.speaker import EncoderClassifier
-
-    EncoderClassifier.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb",
-                                   savedir=str(MODELS / "ecapa"), run_opts={"device": "cpu"})
-    print("[ecapa] OK")
-
-
 def check_runtime() -> None:
     import runpod
     import torch
@@ -70,5 +62,4 @@ if __name__ == "__main__":
     check_runtime()
     check_bsroformer()
     check_chatterbox()
-    check_ecapa()
     print("[smoke_test] tout est chargeable hors ligne")

@@ -4,8 +4,8 @@ Une seule image, deux tâches choisies par le paramètre `task` du job :
 
 | `task` | Ce que ça fait | Modèle embarqué |
 |--------|----------------|-----------------|
-| `instrumental` | Instrumental seul. **BS-Roformer Leap Xe** (unwa, juin 2026) : un seul checkpoint entraîné directement sur la cible instrumentale, 18,07 dB SDR instrumental sur le Multisong de MVSEP, au-dessus des ensembles internes du site. | `pcunwa/BS-Roformer-Leap` → `Xe/bs_leap_xe_inst.ckpt` (268 MB), chargé par [bs-roformer-infer](https://github.com/openmirlab/bs-roformer-infer) (MIT) avec sha256 vérifié |
-| `vc` | Conversion de timbre Chatterbox VC (S3Gen) : timbre moyenné sur 1..8 clips de référence, prompt phonétique optionnel, pas / temperature / CFG réglables, complétion de la queue, best-of-N départagé par similarité de locuteur. | `ResembleAI/chatterbox` (`s3gen.safetensors`, `conds.pt`) + ECAPA `speechbrain/spkrec-ecapa-voxceleb` |
+| `instrumental` | Instrumental seul. **BS-Roformer Leap Xe** (unwa, juin 2026) : un seul checkpoint entraîné directement sur la cible instrumentale, 18,07 dB SDR instrumental sur le Multisong de MVSEP, au-dessus des ensembles internes du site. | `pcunwa/BS-Roformer-Leap` → `Xe/bs_leap_xe_inst.ckpt` (268 MB), chargé par [bs-roformer-infer](https://github.com/openmirlab/bs-roformer-infer) (MIT, épinglé sur le commit `b0f1386f` : la roue PyPI 0.1.5 ne connaît pas Leap) avec sha256 vérifié |
+| `vc` | Conversion de timbre Chatterbox VC (S3Gen) : timbre moyenné sur 1..8 clips de référence, prompt phonétique optionnel, pas / temperature / CFG réglables, complétion de la queue. Un seul tirage. | `ResembleAI/chatterbox` (`s3gen.safetensors`, `conds.pt`) |
 
 Tous les poids sont dans l'image (`/models`). À l'inférence, `HF_HUB_OFFLINE=1` et le checkpoint BS-Roformer est
 résolu localement : **aucun téléchargement de modèle**. Les modèles restent résidents entre deux jobs d'un même worker.
@@ -41,7 +41,7 @@ Sur OOM CUDA : libération des modèles résidents puis un second essai.
 
 ```json
 { "input": { "task": "vc", "source_url": "https://…", "ref_urls": ["https://…", "https://…"],
-             "prompt_url": "https://…", "n": 4, "steps": 20, "temp": 0.8, "cfg": 0.7,
+             "prompt_url": "https://…", "steps": 25, "temp": 0.8, "cfg": 0.7,
              "ref_len": 10, "output_url": "https://…(PUT)", "output_format": "wav" } }
 ```
 
@@ -50,18 +50,17 @@ Sur OOM CUDA : libération des modèles résidents puis un second essai.
 | `source_url` | — | voix à convertir |
 | `ref_urls` (ou `ref_url`) | — | 1..8 clips de la voix cible (timbre moyenné) |
 | `prompt_url` | 1er `ref_urls` | clip dans la langue de la source (contexte phonétique) |
-| `n` | 1 | tirages best-of-N (1..8), départagés par similarité ECAPA |
-| `steps` | 20 | pas du flow matching (`n_cfm_timesteps`, 1..64) |
+| `steps` | 25 | pas du flow matching (`n_cfm_timesteps`, 1..64 ; défaut interne de Chatterbox : 10) |
 | `temp` | 0.8 | temperature du décodeur (0..2) |
 | `cfg` | checkpoint | `inference_cfg_rate` (0..3) |
 | `ref_len` | 10 | longueur du prompt de référence en secondes (1..30) |
 | `overlap` | 1.0 | fondu de la complétion de queue (s) |
 | `preproc` | `true` | passe-haut 70 Hz + sonie −23 LUFS sur la source |
-| `seed` | 1000 | graine du 1er tirage (`seed + i`) |
+| `seed` | 1000 | graine du tirage (résultat reproductible) |
 | `output_sr` | 24000 | rééchantillonnage de sortie (8000..48000) |
 
 La sortie est mono. Le filigrane Perth de Chatterbox est conservé (comportement natif de `generate`).
-Le scorer WER (Whisper large-v3) et `resemble-enhance` du script d'essai ne sont **pas** embarqués.
+Un seul tirage par job (décision du 2026-09-09) : pas de best-of-N, donc ni scorer ECAPA, ni Whisper, ni `resemble-enhance`.
 
 ## Sortie
 
@@ -73,12 +72,12 @@ Le scorer WER (Whisper large-v3) et `resemble-enhance` du script d'essai ne sont
   "device": "cuda", "models_loaded": ["bs_roformer_leap_xe"] }
 ```
 
-Pour `vc` s'ajoutent `n`, `best_run`, `runs[]` (seed, similarité, complétions de queue) et `warnings[]`.
+Pour `vc` s'ajoutent `seed`, `tail_passes`, les réglages appliqués et `warnings[]`.
 Erreurs : `{ "error": "…", "code": "bad_input" | "internal", "job_id": "…" }`. Une `bad_input` ne doit jamais être rejouée.
 
 ## Build, CI, déploiement
 
-- **CI** : `.github/workflows/docker-build.yml` — push sur `main` (ou lancement manuel) → `ghcr.io/<owner>/spark-gpu-inference:latest` et `:sha-<commit>`. Le build télécharge les poids (≈ 0,27 GB BS-Roformer + 1 GB Chatterbox + 0,1 GB ECAPA) et exécute `scripts/smoke_test.py` **hors ligne sur CPU** : chargement de chaque modèle et une vraie passe avant BS-Roformer sur 2 s de bruit. L'image n'est publiée que si tout passe.
+- **CI** : `.github/workflows/docker-build.yml` — push sur `main` (ou lancement manuel) → `ghcr.io/<owner>/spark-gpu-inference:latest` et `:sha-<commit>`. Le build télécharge les poids (≈ 0,27 GB BS-Roformer + 1 GB Chatterbox) et exécute `scripts/smoke_test.py` **hors ligne sur CPU** : chargement de chaque modèle et une vraie passe avant BS-Roformer sur 2 s de bruit. L'image n'est publiée que si tout passe.
 - **RunPod** : endpoint serverless, image `ghcr.io/<owner>/spark-gpu-inference:latest` (le package GHCR doit être public, ou renseigner les identifiants de registre dans RunPod), GPU 16 GB minimum (24 GB confortable pour garder les deux modèles résidents), disque conteneur ≥ 15 GB. Aucune variable d'environnement requise.
 - **Local** :
 
@@ -98,10 +97,10 @@ src/spark_infer/
 ├── params.py                    # validation des entrées (pure)
 ├── tasks.py                     # téléchargement → modèle → encodage → livraison, rejeu OOM
 ├── separation_engine.py         # InstrumentalSeparator (BS-Roformer Leap Xe via BSRoformerSession)
-├── vc_engine.py                 # VoiceConverter (Chatterbox réglé + best-of-N ECAPA)
+├── vc_engine.py                 # VoiceConverter (Chatterbox réglé, un tirage)
 ├── registry.py                  # modèles résidents, libération sur OOM
 ├── io_utils.py                  # HTTP, ffmpeg, PUT présigné, base64
 └── audio_utils.py               # fonctions pures (prétraitement, fondu)
-scripts/fetch_weights.py         # build : poids BS-Roformer + Chatterbox + ECAPA
+scripts/fetch_weights.py         # build : poids BS-Roformer + Chatterbox
 scripts/smoke_test.py            # build : chargement hors ligne + passe avant BS-Roformer
 ```

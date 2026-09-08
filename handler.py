@@ -3,7 +3,7 @@
 
 Une image, deux tâches choisies par `input.task` :
   - "instrumental" : instrumental seul, BS-Roformer Leap Xe (unwa) via bs-roformer-infer
-  - "vc"           : conversion de timbre Chatterbox VC (S3Gen) avec best-of-N
+  - "vc"           : conversion de timbre Chatterbox VC (S3Gen), un seul tirage
 
 Les modèles restent résidents entre deux jobs du même worker (chargés à la première demande).
 Voir README.md pour le contrat d'entrée/sortie complet.

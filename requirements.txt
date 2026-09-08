@@ -2,7 +2,10 @@
 # chatterbox-tts est installé --no-deps (pour ne pas embarquer gradio) : ses dépendances sont listées ici.
 
 # --- Séparation instrumentale : BS-Roformer Leap Xe via bs-roformer-infer (MIT, Python >= 3.11) ---
-bs-roformer-infer==0.1.5
+# La roue PyPI 0.1.5 est en retard sur le dépôt : pas d'entrée Leap dans son registre, pas de
+# `mlp_expansion_factor` (exigé par la config Leap Xe), pas de BSRoformerSession. On épingle le commit
+# GitHub du 2026-08-17 dont le code a été relu ; à mettre à jour quand PyPI le rattrapera.
+bs-roformer-infer @ git+https://github.com/openmirlab/bs-roformer-infer@b0f1386fcced25f559f3e61c9f08a73cd9bddf80
 
 # --- Chatterbox VC (pins de chatterbox-tts 0.1.7) ---
 numpy>=1.24.0,<2.0.0
@@ -18,9 +21,6 @@ pyloudnorm
 omegaconf
 safetensors
 huggingface_hub
-
-# --- Scorer de timbre (best-of-N) ---
-speechbrain==1.1.1
 
 # --- Runtime ---
 runpod>=1.7.0

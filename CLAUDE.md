@@ -16,11 +16,14 @@ Détails du contrat : [README.md](README.md).
   sortie s'appelle `other` dans la config du modèle : c'est l'instrumental (`target_instrument: other`).
 - **Python 3.11 obligatoire** : bs-roformer-infer importe `tomllib`. Base `python:3.11-slim`, torch cu124 par pip
   (pas de CUDA système, plus d'ONNX Runtime).
+- **VC : un seul tirage.** Pas de best-of-N (décision 2026-09-09) → ni ECAPA/speechbrain, ni Whisper, ni resemble-enhance.
+- **VC `steps` = 25 par défaut** (choix propriétaire 2026-09-09 ; défaut interne de Chatterbox : 10).
 - **Chatterbox réglé par job, jamais empilé.** `VoiceConverter` garde les méthodes d'origine (`_orig_*`) et reconstruit
   les `functools.partial` à chaque job ; sinon les réglages s'accumulent d'un job à l'autre sur le modèle résident.
 - **Erreurs typées.** `InputError` → `code: bad_input` (ne jamais rejouer) ; le reste → `code: internal`. Un OOM CUDA
   libère les modèles (`registry.release()`) et rejoue une fois.
-- **Pins.** torch/torchaudio 2.6.0 cu124 (exigés par chatterbox-tts 0.1.7), numpy < 2, bs-roformer-infer 0.1.5.
+- **Pins.** torch/torchaudio 2.6.0 cu124 (exigés par chatterbox-tts 0.1.7), numpy < 2, bs-roformer-infer épinglé sur
+  le commit GitHub `b0f1386f` (la roue PyPI 0.1.5 n'a ni l'entrée Leap ni `mlp_expansion_factor`).
   chatterbox-tts est installé `--no-deps` pour ne pas embarquer gradio ; ses dépendances sont listées dans
   `requirements.txt`. `pip check` du Dockerfile bloque tout autre conflit.
 
