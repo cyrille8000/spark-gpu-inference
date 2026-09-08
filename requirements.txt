@@ -1,0 +1,30 @@
+# torch / torchaudio 2.6.0 (cu124) sont installés AVANT ce fichier par le Dockerfile.
+# chatterbox-tts est installé --no-deps (pour ne pas embarquer gradio) : ses dépendances sont listées ici.
+
+# --- Chatterbox VC (pins de chatterbox-tts 0.1.7) ---
+numpy>=1.24.0,<2.0.0
+librosa==0.11.0
+s3tokenizer
+transformers==5.2.0
+diffusers==0.29.0
+resemble-perth>=1.0.0
+conformer==0.3.2
+spacy-pkuseg
+pykakasi==2.3.0
+pyloudnorm
+omegaconf
+safetensors
+huggingface_hub
+
+# --- Demucs (piste vocale htdemucs_ft) + MDX-Net (ONNX, CUDA 12 / cuDNN 9) ---
+demucs==4.0.1
+onnxruntime-gpu==1.22.0
+
+# --- Scorer de timbre (best-of-N) ---
+speechbrain==1.1.1
+
+# --- Runtime ---
+runpod>=1.7.0
+requests
+soundfile
+scipy

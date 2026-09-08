@@ -1,0 +1,14 @@
+.git
+.github
+.claude
+tests
+__pycache__
+**/__pycache__
+*.pyc
+*.wav
+*.mp3
+*.m4a
+*.mp4
+*.webm
+*.md
+test_input.json

@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+
+# Médias et poids (jamais dans le dépôt : téléchargés au build)
+*.wav
+*.mp3
+*.m4a
+*.mp4
+*.webm
+*.onnx
+*.th
+*.pt
+*.safetensors
+models/
+
+# Local
+.env
+.env.*
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
