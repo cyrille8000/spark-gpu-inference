@@ -42,6 +42,11 @@ image = (
     })
     # Seule dépendance propre à Modal : le serveur web de l'endpoint.
     .pip_install("fastapi[standard]")
+    # LE CODE VIENT DU DÉPÔT LOCAL, pas de l'image : monté PAR-DESSUS /app/src/spark_infer (le
+    # chemin que PYTHONPATH fait lire en premier ; dans /root, l'image gagnait). Ce qui est déployé
+    # sur Modal est donc exactement ce qui est dans le dépôt au moment du `modal deploy`, sans
+    # attendre un build GHCR ; les poids et les paquets, eux, viennent de l'image.
+    .add_local_dir("src/spark_infer", remote_path="/app/src/spark_infer", ignore=["**/__pycache__"])
 )
 
 app = modal.App("spark-gpu-inference")
@@ -63,7 +68,11 @@ class SparkInference:
         from pathlib import Path
         for sub in ("bsroformer", "chatterbox"):
             assert (Path("/models") / sub).is_dir(), f"/models/{sub} absent de l'image"
-        print(f"[modal] image={IMAGE} gpu={GPU} api_key={'oui' if self.api_key else 'NON'}", flush=True)
+        # Le code monté doit être celui du dépôt : `service.py` n'existe pas dans l'image de base.
+        import spark_infer
+        import spark_infer.service  # noqa: F401 — échoue tout de suite si le montage n'a pas pris
+        print(f"[modal] image={IMAGE} gpu={GPU} api_key={'oui' if self.api_key else 'NON'} "
+              f"code={Path(spark_infer.__file__).parent}", flush=True)
 
     @modal.fastapi_endpoint(method="POST")
     def run(self, input_data: dict) -> dict:
