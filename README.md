@@ -5,7 +5,7 @@ Une seule image, deux tâches choisies par le paramètre `task` du job :
 | `task` | Ce que ça fait | Modèle embarqué |
 |--------|----------------|-----------------|
 | `instrumental` | Instrumental seul. **BS-Roformer Leap Xe** (unwa, juin 2026) : un seul checkpoint entraîné directement sur la cible instrumentale, 18,07 dB SDR instrumental sur le Multisong de MVSEP, au-dessus des ensembles internes du site. | `pcunwa/BS-Roformer-Leap` → `Xe/bs_leap_xe_inst.ckpt` (268 MB), chargé par [bs-roformer-infer](https://github.com/openmirlab/bs-roformer-infer) (MIT, épinglé sur le commit `b0f1386f` : la roue PyPI 0.1.5 ne connaît pas Leap) avec sha256 vérifié |
-| `vc` | Conversion de timbre Chatterbox VC (S3Gen) : timbre moyenné sur 1..8 clips de référence, prompt phonétique optionnel, pas / temperature / CFG réglables, complétion de la queue. Un seul tirage. | `ResembleAI/chatterbox` (`s3gen.safetensors`, `conds.pt`) |
+| `vc` | Conversion de timbre Chatterbox VC (S3Gen) : timbre moyenné sur 1..8 clips de référence, prompt phonétique optionnel, pas / temperature / CFG réglables, complétion de la queue collée bout à bout (sans fondu). Un seul tirage. | `ResembleAI/chatterbox` (`s3gen.safetensors`, `conds.pt`) |
 
 Tous les poids sont dans l'image (`/models`). À l'inférence, `HF_HUB_OFFLINE=1` et le checkpoint BS-Roformer est
 résolu localement : **aucun téléchargement de modèle**. Les modèles restent résidents entre deux jobs d'un même worker.
@@ -62,11 +62,12 @@ Sur OOM CUDA : libération des modèles résidents puis un second essai.
 | `temp` | 0.8 | temperature du décodeur (0..2) |
 | `cfg` | checkpoint | `inference_cfg_rate` (0..3) |
 | `ref_len` | 10 | longueur du prompt de référence en secondes (1..30) |
-| `overlap` | 1.0 | fondu de la complétion de queue (s) |
 | `preproc` | `true` | passe-haut 70 Hz + sonie −23 LUFS sur la source |
 | `seed` | 1000 | graine du tirage (résultat reproductible) |
 
-La sortie est mono. Le filigrane Perth de Chatterbox est conservé (comportement natif de `generate`).
+La sortie est mono, de la durée exacte de la source. Si le modèle produit plus court, la partie de la source restée sans
+sortie est reconvertie seule et **collée bout à bout, sans recouvrement ni fondu** (décision du 2026-09-09), jusqu'à 5 fois ;
+`tail_passes` compte ces passes. Le filigrane Perth de Chatterbox est conservé (comportement natif de `generate`).
 Un seul tirage par job (décision du 2026-09-09) : pas de best-of-N, donc ni scorer ECAPA, ni Whisper, ni `resemble-enhance`.
 
 ## Sortie
@@ -114,7 +115,7 @@ src/spark_infer/
 ├── vc_engine.py                 # VoiceConverter (Chatterbox réglé, un tirage)
 ├── registry.py                  # modèles résidents, libération sur OOM
 ├── io_utils.py                  # HTTP, ffmpeg, PUT présigné, base64
-└── audio_utils.py               # fonctions pures (prétraitement, fondu)
+└── audio_utils.py               # fonctions pures (prétraitement, ajustement de durée)
 scripts/fetch_weights.py         # build : poids BS-Roformer + Chatterbox
 scripts/smoke_test.py            # build : chargement hors ligne + passe avant BS-Roformer
 ```

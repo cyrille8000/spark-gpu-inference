@@ -5,24 +5,13 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from spark_infer.audio_utils import crossfade_append, fit_length, is_cuda_oom, preprocess_source  # noqa: E402
+from spark_infer.audio_utils import fit_length, is_cuda_oom, preprocess_source  # noqa: E402
 
 
 def test_is_cuda_oom():
     assert is_cuda_oom(RuntimeError("CUDA out of memory. Tried to allocate 2 GiB"))
     assert is_cuda_oom(RuntimeError("CUDA_ERROR_OUT_OF_MEMORY"))
     assert not is_cuda_oom(RuntimeError("shape mismatch"))
-
-
-def test_crossfade_append_lengths_and_continuity():
-    base = np.ones(100, dtype=np.float32)
-    tail = np.zeros(50, dtype=np.float32)
-    out = crossfade_append(base, tail, 20)
-    assert len(out) == 130
-    assert out[79] == 1.0 and out[80] == 1.0 and out[99] == 0.0 and out[100] == 0.0
-    assert np.all(np.diff(out[80:100]) <= 0)   # descente monotone dans le fondu
-    assert len(crossfade_append(base, tail, 0)) == 150
-    assert len(crossfade_append(base, tail, 500)) == 100  # recouvrement borné par la queue
 
 
 def test_fit_length():

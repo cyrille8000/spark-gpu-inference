@@ -36,16 +36,6 @@ def preprocess_source(y: np.ndarray, sr: int, highpass_hz: float = 70.0,
     return np.clip(y, -0.99, 0.99).astype(np.float32)
 
 
-def crossfade_append(base: np.ndarray, tail: np.ndarray, ov_n: int) -> np.ndarray:
-    """Concatène `tail` à `base` avec un fondu enchaîné linéaire de `ov_n` échantillons."""
-    ov_n = int(min(ov_n, len(base), len(tail)))
-    if ov_n <= 0:
-        return np.concatenate([base, tail])
-    f = np.linspace(0, 1, ov_n, dtype=np.float32)
-    mixed = base[-ov_n:] * (1 - f) + tail[:ov_n] * f
-    return np.concatenate([base[:-ov_n], mixed, tail[ov_n:]])
-
-
 def fit_length(x: np.ndarray, n: int) -> np.ndarray:
     """Ramène `x` à exactement `n` échantillons (padding zéro ou coupe)."""
     n = max(0, int(n))

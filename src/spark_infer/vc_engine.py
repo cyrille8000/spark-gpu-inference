@@ -2,9 +2,9 @@
 
 Port du script d'essai `vc_test.py` : prétraitement de la source, embedding de timbre
 moyenné sur plusieurs clips de référence, prompt phonétique optionnel, pas/temperature/CFG
-du décodeur CFM, complétion de la queue par fondu enchaîné. Décision du propriétaire
-(2026-09-09) : une seule itération (pas de best-of-N, donc pas de scorer ECAPA ni WER),
-pas de resemble-enhance.
+du décodeur CFM, complétion de la queue. Décisions du propriétaire (2026-09-09) : une seule
+itération (pas de best-of-N, donc pas de scorer ECAPA ni WER), pas de resemble-enhance, et la
+queue manquante est reconvertie puis COLLÉE bout à bout, sans recouvrement ni fondu.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import numpy as np
 import soundfile as sf
 import torch
 
-from .audio_utils import crossfade_append, fit_length, preprocess_source
+from .audio_utils import fit_length, preprocess_source
 from .params import VcParams
 
 log = logging.getLogger("spark.vc")
@@ -72,10 +72,11 @@ class VoiceConverter:
         out = self._convert(str(src_path))
         k = 0
         while src_d - len(out) / self.sr > p.tail_tolerance_s and k < p.max_tail_passes:
-            start = max(0.0, len(out) / self.sr - p.overlap)
+            # la partie de la source qui n'a pas encore de sortie, reconvertie seule et collée telle quelle
+            start = len(out) / self.sr
             tail_path = workdir / f"tail_{seed}_{k}.wav"
             sf.write(tail_path, y_src[int(start * sr_src):], sr_src)
-            out = crossfade_append(out, self._convert(str(tail_path)), int(p.overlap * self.sr))
+            out = np.concatenate([out, self._convert(str(tail_path))])
             k += 1
         return fit_length(out, int(round(src_d * self.sr))), k
 

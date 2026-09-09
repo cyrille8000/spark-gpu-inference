@@ -54,7 +54,7 @@ def test_vc_defaults_and_ref_url_alias():
     r = parse_vc({"source_url": URL, "ref_url": URL})
     assert r.ref_urls == [URL] and r.prompt_url is None and r.output_format == "wav"
     p = r.params
-    assert (p.steps, p.temp, p.cfg, p.ref_len, p.overlap, p.preproc, p.seed) == (25, 0.8, None, 10.0, 1.0, True, 1000)
+    assert (p.steps, p.temp, p.cfg, p.ref_len, p.preproc, p.seed) == (25, 0.8, None, 10.0, True, 1000)
 
 
 def test_vc_validation():

@@ -85,7 +85,6 @@ class VcParams:
     temp: float = 0.8          # temperature du décodeur
     cfg: float | None = None   # inference_cfg_rate (None = valeur du checkpoint)
     ref_len: float = 10.0      # longueur du prompt de référence (s)
-    overlap: float = 1.0       # recouvrement du fondu de queue (s)
     preproc: bool = True       # passe-haut + sonie -23 LUFS sur la source
     seed: int = 1000           # graine du tirage (résultat reproductible)
     max_tail_passes: int = 5   # complétions de queue max
@@ -137,7 +136,6 @@ def parse_vc(inp: dict) -> VcRequest:
         temp=_float(inp, "temp", 0.0, 2.0, 0.8),  # type: ignore[arg-type]
         cfg=_float(inp, "cfg", 0.0, 3.0, None),
         ref_len=_float(inp, "ref_len", 1.0, 30.0, 10.0),  # type: ignore[arg-type]
-        overlap=_float(inp, "overlap", 0.1, 5.0, 1.0),  # type: ignore[arg-type]
         preproc=_bool(inp, "preproc", True),
         seed=_int(inp, "seed", 0, 2**31 - 1, 1000),  # type: ignore[arg-type]
     )
