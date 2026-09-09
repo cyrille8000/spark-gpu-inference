@@ -19,7 +19,7 @@ import soundfile as sf
 from . import registry
 from .audio_utils import is_cuda_oom
 from .io_utils import InputError, decode_to_wav, deliver, download, encode_output, ffprobe_duration
-from .params import InstrumentalRequest, VcRequest, parse_instrumental, parse_task, parse_vc
+from .params import OUTPUT_MONO, OUTPUT_SR, InstrumentalRequest, VcRequest, parse_instrumental, parse_task, parse_vc
 
 log = logging.getLogger("spark.tasks")
 
@@ -135,7 +135,7 @@ def _run_instrumental(req: InstrumentalRequest, workdir: Path, job_id: str, prog
 
     with timer.step("encode"):
         out_path = workdir / f"instrumental.{req.output_format}"
-        encode_output(Path(inst_wav), out_path, req.output_format, req.mono, sr=req.output_sr)
+        encode_output(Path(inst_wav), out_path, req.output_format, OUTPUT_MONO, sr=OUTPUT_SR)
     with timer.step("upload"):
         delivered = deliver(out_path, req.output_url, req.output_format)
     report(100, "terminé")
@@ -143,8 +143,8 @@ def _run_instrumental(req: InstrumentalRequest, workdir: Path, job_id: str, prog
         **delivered,
         "model": MODEL_SLUG,
         "duration_s": round(duration, 3),
-        "sample_rate": req.output_sr,
-        "channels": 1 if req.mono else 2,
+        "sample_rate": OUTPUT_SR,
+        "channels": 1,
         "attempts": attempts,
         "cold_start": cold_start,
     }
@@ -189,9 +189,9 @@ def _run_vc(req: VcRequest, workdir: Path, job_id: str, progress: Progress, time
         sf.write(out_wav, wav.astype(np.float32), sr, subtype="FLOAT")
         report(92, "encodage")
         out_path = workdir / f"converted.{req.output_format}"
-        encode_output(out_wav, out_path, req.output_format, mono=True, sr=req.output_sr)
+        encode_output(out_wav, out_path, req.output_format, OUTPUT_MONO, sr=OUTPUT_SR)
     with timer.step("upload"):
         delivered = deliver(out_path, req.output_url, req.output_format)
     report(100, "terminé")
-    return {**delivered, **meta, "sample_rate": req.output_sr or sr, "channels": 1,
+    return {**delivered, **meta, "sample_rate": OUTPUT_SR, "channels": 1,
             "duration_s": round(len(wav) / sr, 3), "attempts": attempts, "cold_start": cold_start}

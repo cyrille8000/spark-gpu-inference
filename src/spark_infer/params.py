@@ -9,6 +9,10 @@ TASKS = ("instrumental", "vc")
 OUTPUT_FORMATS = ("wav", "mp3")
 MAX_REFS = 8
 
+# TOUT RÉSULTAT EST MONO 24 kHz (décision propriétaire, 2026-09-09) : ce n'est pas un paramètre.
+OUTPUT_SR = 24_000
+OUTPUT_MONO = True
+
 
 def _bool(inp: dict, key: str, default: bool) -> bool:
     v = inp.get(key, default)
@@ -96,8 +100,6 @@ class InstrumentalRequest:
     audio_url: str
     output_url: str | None
     output_format: str
-    output_sr: int          # le modèle travaille en 44,1 kHz ; rééchantillonné à l'encodage
-    mono: bool
 
 
 @dataclass
@@ -107,7 +109,6 @@ class VcRequest:
     prompt_url: str | None
     output_url: str | None
     output_format: str
-    output_sr: int | None
     params: VcParams = field(default_factory=VcParams)
 
 
@@ -116,8 +117,6 @@ def parse_instrumental(inp: dict) -> InstrumentalRequest:
         audio_url=check_url(inp.get("audio_url"), "audio_url"),
         output_url=_output_url(inp),
         output_format=_output_format(inp, "wav"),
-        output_sr=_int(inp, "output_sr", 8000, 48000, 24000),  # type: ignore[arg-type]
-        mono=_bool(inp, "mono", True),
     )
 
 
@@ -145,7 +144,6 @@ def parse_vc(inp: dict) -> VcRequest:
         prompt_url=check_url(prompt, "prompt_url") if prompt else None,
         output_url=_output_url(inp),
         output_format=_output_format(inp, "wav"),
-        output_sr=_int(inp, "output_sr", 8000, 48000, None),
         params=params,
     )
 

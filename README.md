@@ -22,7 +22,9 @@ Commun aux deux tâches :
 | `task` | `"instrumental"` \| `"vc"` | — | obligatoire |
 | `output_url` | URL | — | PUT présigné (R2/S3). Sans lui, le résultat revient en `audio_base64` (≤ 10 MB) |
 | `output_format` | `"wav"` \| `"mp3"` | `wav` | MP3 = libmp3lame VBR `-q:a 2` (comme la plateforme) |
-| `output_sr` | 8000..48000 | 24000 | fréquence de sortie (rééchantillonnage soxr à l'encodage) |
+
+**Tout résultat est mono 24 kHz** (16 bits en WAV), sans option : c'est le format de la plateforme. Rééchantillonnage soxr,
+mixage mono à gain 1 (matrices `pan` explicites, jamais `-ac`).
 | `callback_url` | URL | — | rappel de fin de job : `POST` JSON du résultat (succès **ou** erreur), sans le base64 |
 | `callback_token` | string | — | envoyé en `Authorization: Bearer …` sur le rappel |
 
@@ -39,9 +41,6 @@ Le rappel de l'image est le chemin normal (en-tête Bearer, même schéma que la
 | Champ | Défaut | Rôle |
 |-------|--------|------|
 | `audio_url` | — | mp3, wav, m4a, mp4… (décodé et rééchantillonné en 44,1 kHz stéréo par ffmpeg pour le modèle) |
-| `mono` | `true` | mixage mono en sortie |
-
-Défauts = l'instrumental de la plateforme : **WAV 24 kHz mono 16 bits**.
 
 Découpage fenêtré du modèle : chunks de 881 559 échantillons (20 s), recouvrement 2, fondu aux jonctions.
 Sur OOM CUDA : libération des modèles résidents puis un second essai.
@@ -66,7 +65,7 @@ Sur OOM CUDA : libération des modèles résidents puis un second essai.
 | `preproc` | `true` | passe-haut 70 Hz + sonie −23 LUFS sur la source |
 | `seed` | 1000 | graine du tirage (résultat reproductible) |
 
-La sortie est mono, de la durée exacte de la source. Si le modèle produit plus court, la partie de la source restée sans
+La sortie a la durée exacte de la source. Si le modèle produit plus court, la partie de la source restée sans
 sortie est reconvertie seule et **collée bout à bout, sans recouvrement ni fondu** (décision du 2026-09-09), jusqu'à 5 fois ;
 `tail_passes` compte ces passes. Le filigrane Perth de Chatterbox est conservé (comportement natif de `generate`).
 Un seul tirage par job (décision du 2026-09-09) : pas de best-of-N, donc ni scorer ECAPA, ni Whisper, ni `resemble-enhance`.

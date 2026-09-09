@@ -20,9 +20,9 @@ def test_task_required():
         parse_task({})
 
 
-def test_instrumental_defaults_match_platform_instrumental():
+def test_instrumental_defaults():
     r = parse_instrumental({"audio_url": URL})
-    assert r.output_format == "wav" and r.output_sr == 24000 and r.mono is True and r.output_url is None
+    assert r.output_format == "wav" and r.output_url is None
 
 
 def test_instrumental_validation():
@@ -32,13 +32,10 @@ def test_instrumental_validation():
         parse_instrumental({"audio_url": "ftp://x/y"})
     with pytest.raises(InputError):
         parse_instrumental({"audio_url": URL, "output_format": "flac"})
-    with pytest.raises(InputError):
-        parse_instrumental({"audio_url": URL, "mono": "peut-être"})
-    with pytest.raises(InputError):
-        parse_instrumental({"audio_url": URL, "output_sr": 96000})
-    r = parse_instrumental({"audio_url": URL, "output_url": URL, "mono": "false", "output_format": "MP3",
-                            "output_sr": 44100})
-    assert r.mono is False and r.output_url == URL and r.output_format == "mp3" and r.output_sr == 44100
+    # mono / output_sr ne sont plus des paramètres : ignorés, la sortie est toujours mono 24 kHz
+    r = parse_instrumental({"audio_url": URL, "output_url": URL, "output_format": "MP3", "mono": False, "output_sr": 44100})
+    assert r.output_url == URL and r.output_format == "mp3"
+    assert not hasattr(r, "mono") and not hasattr(r, "output_sr")
 
 
 def test_callback():
@@ -68,6 +65,6 @@ def test_vc_validation():
         parse_vc({"source_url": URL, "ref_urls": [URL], "steps": "vingt"})
     r = parse_vc({"source_url": URL, "ref_urls": [URL, URL], "prompt_url": URL,
                   "steps": 30, "temp": 0.6, "cfg": 0.7, "ref_len": 8, "preproc": False,
-                  "output_format": "mp3", "output_sr": 44100})
-    assert len(r.ref_urls) == 2 and r.prompt_url == URL and r.output_sr == 44100
+                  "output_format": "mp3"})
+    assert len(r.ref_urls) == 2 and r.prompt_url == URL and r.output_format == "mp3"
     assert r.params.steps == 30 and r.params.cfg == 0.7 and r.params.preproc is False
