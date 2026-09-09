@@ -28,7 +28,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg libsndfile1 curl git ca-certificates \
     && apt-get clean && rm -rf /var/lib/apt/lists/* \
-    && python -m pip install --upgrade pip setuptools wheel
+    && python -m pip install --upgrade pip wheel "setuptools<82"
+# setuptools < 82 : resemble-perth (filigrane de Chatterbox) importe encore `pkg_resources`, supprimé en 82.0.0 ;
+# sans lui perth.PerthImplicitWatermarker vaut None et ChatterboxVC ne se construit plus.
 
 # ---------------------------------------------------------------- [2/5] PyTorch 2.6.0 (pin de chatterbox-tts) — CUDA 12.4
 RUN pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124 \
@@ -38,7 +40,9 @@ RUN pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pyto
 COPY requirements.txt /app/requirements.txt
 RUN pip install -r /app/requirements.txt \
     && pip install --no-deps chatterbox-tts==0.1.7 \
-    && python -c "import torch; assert torch.__version__.startswith('2.6.0'), torch.__version__"
+    && python -c "import torch; assert torch.__version__.startswith('2.6.0'), torch.__version__" \
+    && python -c "import setuptools, pkg_resources; assert int(setuptools.__version__.split('.')[0]) < 82, setuptools.__version__" \
+    && python -c "import perth; assert perth.PerthImplicitWatermarker is not None, 'perth: filigrane indisponible'"
 
 # Cohérence des dépendances : seul le manque de gradio (volontairement non installé) est toléré.
 RUN set +e; pip check > /tmp/pipcheck.txt; set -e; cat /tmp/pipcheck.txt; \

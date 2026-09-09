@@ -38,8 +38,11 @@ def check_bsroformer() -> None:
 
 
 def check_chatterbox() -> None:
+    import perth
     from chatterbox.vc import ChatterboxVC
 
+    # perth met PerthImplicitWatermarker à None si son import échoue (pkg_resources absent avec setuptools >= 82)
+    assert perth.PerthImplicitWatermarker is not None, "perth.PerthImplicitWatermarker est None : filigrane inutilisable"
     vc = ChatterboxVC.from_local(str(MODELS / "chatterbox"), "cpu")
     dec = vc.s3gen.flow.decoder
     assert "n_cfm_timesteps" in inspect.signature(vc.s3gen.inference).parameters

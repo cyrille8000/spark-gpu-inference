@@ -28,7 +28,8 @@ Détails du contrat : [README.md](README.md).
 - **Instrumental par défaut = WAV 24 kHz mono 16 bits**, comme l'instrumental de la plateforme.
 - **Erreurs typées.** `InputError` → `code: bad_input` (ne jamais rejouer) ; le reste → `code: internal`. Un OOM CUDA
   libère les modèles (`registry.release()`) et rejoue une fois.
-- **Pins.** torch/torchaudio 2.6.0 cu124 (exigés par chatterbox-tts 0.1.7), numpy < 2, bs-roformer-infer épinglé sur
+- **Pins.** setuptools < 82 (resemble-perth importe `pkg_resources`, supprimé en 82 ; sinon le filigrane Chatterbox
+  vaut None), torch/torchaudio 2.6.0 cu124 (exigés par chatterbox-tts 0.1.7), numpy < 2, bs-roformer-infer épinglé sur
   le commit GitHub `b0f1386f` (la roue PyPI 0.1.5 n'a ni l'entrée Leap ni `mlp_expansion_factor`).
   chatterbox-tts est installé `--no-deps` pour ne pas embarquer gradio ; ses dépendances sont listées dans
   `requirements.txt`. `pip check` du Dockerfile bloque tout autre conflit.
