@@ -26,6 +26,9 @@ Détails du contrat : [README.md](README.md).
   succès comme erreur, sans base64 ; le webhook natif RunPod reste le filet si le worker meurt. Coût = temps seulement
   (`timings` par étape + `executionTime` RunPod), pas d'estimation en dollars (décision 2026-09-09).
 - **Instrumental par défaut = WAV 24 kHz mono 16 bits**, comme l'instrumental de la plateforme.
+- **Conversions de canaux à gain 1, matrices explicites.** Jamais `-ac` seul : ffmpeg atténue mono→stéréo de 0,707
+  et amplifie stéréo→mono de 1,414 (un WAV mono plateforme ressortait 3 dB trop bas). `pan=stereo|c0=c0|c1=c0` et
+  `pan=mono|c0=0.5*c0+0.5*c1` dans `io_utils._channel_filter`, prouvés par `tests/test_ffmpeg_levels.py`.
 - **Erreurs typées.** `InputError` → `code: bad_input` (ne jamais rejouer) ; le reste → `code: internal`. Un OOM CUDA
   libère les modèles (`registry.release()`) et rejoue une fois.
 - **Pins.** setuptools < 82 (resemble-perth importe `pkg_resources`, supprimé en 82 ; sinon le filigrane Chatterbox

@@ -67,13 +67,55 @@ def run_ffmpeg(args: list[str], timeout: int = 1800) -> None:
         raise InputError(f"ffmpeg a échoué : {res.stderr.strip()[-400:]}")
 
 
-def decode_to_wav(src: Path, dst: Path, sr: int | None = None, channels: int | None = None) -> Path:
-    """Décode n'importe quel conteneur/codec en WAV float32 (piste audio seule)."""
-    args = ["-i", str(src), "-vn", "-map_metadata", "-1"]
-    if sr:
-        args += ["-ar", str(sr)]
-    if channels:
+def ffprobe_channels(path: Path) -> int:
+    res = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=channels",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+        capture_output=True, text=True, timeout=60,
+    )
+    try:
+        return int(res.stdout.strip().splitlines()[0])
+    except (ValueError, IndexError):
+        return 0
+
+
+def _channel_filter(src_channels: int, channels: int | None) -> str | None:
+    """Matrice EXPLICITE à gain 1 pour changer le nombre de canaux.
+
+    `-ac` laisse libswresample choisir sa matrice : mono → stéréo atténue chaque canal de 0,707
+    et stéréo → mono amplifie de 1,414. Selon le chemin les deux se compensent… ou pas : un WAV
+    mono de la plateforme passé au modèle (stéréo) puis rendu mono ressortait 3 dB trop bas.
+    Ici : dupliquer tel quel vers la stéréo, moyenner (0,5 / 0,5) vers le mono. Mesuré à 1,000."""
+    if not channels or src_channels == channels:
+        return None
+    if channels == 2 and src_channels == 1:
+        return "pan=stereo|c0=c0|c1=c0"
+    if channels == 1 and src_channels == 2:
+        return "pan=mono|c0=0.5*c0+0.5*c1"
+    return None  # multicanal exotique : laisser ffmpeg réduire (-ac)
+
+
+def _audio_filters(src_channels: int, channels: int | None, sr: int | None) -> list[str]:
+    """Arguments ffmpeg communs : matrice de canaux explicite + rééchantillonnage soxr."""
+    chain: list[str] = []
+    args: list[str] = []
+    pan = _channel_filter(src_channels, channels)
+    if pan:
+        chain.append(pan)
+    elif channels and src_channels != channels:
         args += ["-ac", str(channels)]
+    if sr:
+        chain.append("aresample=resampler=soxr")
+        args += ["-ar", str(sr)]
+    if chain:
+        args = ["-af", ",".join(chain), *args]
+    return args
+
+
+def decode_to_wav(src: Path, dst: Path, sr: int | None = None, channels: int | None = None) -> Path:
+    """Décode n'importe quel conteneur/codec en WAV float32 (piste audio seule), à gain constant."""
+    args = ["-i", str(src), "-vn", "-map_metadata", "-1"]
+    args += _audio_filters(ffprobe_channels(src), channels, sr)
     args += ["-acodec", "pcm_f32le", "-f", "wav", str(dst)]
     run_ffmpeg(args)
     return dst
@@ -94,12 +136,9 @@ def ffprobe_duration(path: Path) -> float:
 def encode_output(wav_path: Path, out_path: Path, fmt: str, mono: bool, sr: int | None = None,
                   mp3_quality: int = 2) -> Path:
     """WAV float32 → WAV 16 bits ou MP3 (libmp3lame VBR, -q:a 2 comme la plateforme).
-    `sr` : rééchantillonnage de sortie (soxr) ; None = fréquence d'entrée."""
+    `sr` : rééchantillonnage de sortie (soxr) ; None = fréquence d'entrée. Mixage mono à gain 1."""
     args = ["-i", str(wav_path)]
-    if mono:
-        args += ["-ac", "1"]
-    if sr:
-        args += ["-af", "aresample=resampler=soxr", "-ar", str(sr)]
+    args += _audio_filters(ffprobe_channels(wav_path), 1 if mono else None, sr)
     if fmt == "mp3":
         args += ["-codec:a", "libmp3lame", "-q:a", str(mp3_quality), str(out_path)]
     elif fmt == "wav":
