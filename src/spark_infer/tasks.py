@@ -19,7 +19,7 @@ import soundfile as sf
 from . import registry
 from .audio_utils import is_cuda_oom
 from .io_utils import InputError, decode_to_wav, deliver, download, encode_output, ffprobe_duration
-from .params import OUTPUT_MONO, OUTPUT_SR, InstrumentalRequest, VcRequest, parse_instrumental, parse_task, parse_vc
+from .params import OUTPUT_FORMAT, OUTPUT_MONO, OUTPUT_SR, InstrumentalRequest, VcRequest, parse_instrumental, parse_task, parse_vc
 
 log = logging.getLogger("spark.tasks")
 
@@ -134,10 +134,10 @@ def _run_instrumental(req: InstrumentalRequest, workdir: Path, job_id: str, prog
     report(90, "encodage")
 
     with timer.step("encode"):
-        out_path = workdir / f"instrumental.{req.output_format}"
-        encode_output(Path(inst_wav), out_path, req.output_format, OUTPUT_MONO, sr=OUTPUT_SR)
+        out_path = workdir / f"instrumental.{OUTPUT_FORMAT}"
+        encode_output(Path(inst_wav), out_path, OUTPUT_FORMAT, OUTPUT_MONO, sr=OUTPUT_SR)
     with timer.step("upload"):
-        delivered = deliver(out_path, req.output_url, req.output_format)
+        delivered = deliver(out_path, req.output_url, OUTPUT_FORMAT)
     report(100, "terminé")
     return {
         **delivered,
@@ -188,10 +188,10 @@ def _run_vc(req: VcRequest, workdir: Path, job_id: str, progress: Progress, time
         out_wav = workdir / "converted_f32.wav"
         sf.write(out_wav, wav.astype(np.float32), sr, subtype="FLOAT")
         report(92, "encodage")
-        out_path = workdir / f"converted.{req.output_format}"
-        encode_output(out_wav, out_path, req.output_format, OUTPUT_MONO, sr=OUTPUT_SR)
+        out_path = workdir / f"converted.{OUTPUT_FORMAT}"
+        encode_output(out_wav, out_path, OUTPUT_FORMAT, OUTPUT_MONO, sr=OUTPUT_SR)
     with timer.step("upload"):
-        delivered = deliver(out_path, req.output_url, req.output_format)
+        delivered = deliver(out_path, req.output_url, OUTPUT_FORMAT)
     report(100, "terminé")
     return {**delivered, **meta, "sample_rate": OUTPUT_SR, "channels": 1,
             "duration_s": round(len(wav) / sr, 3), "attempts": attempts, "cold_start": cold_start}

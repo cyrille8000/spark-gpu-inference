@@ -25,7 +25,7 @@ Détails du contrat : [README.md](README.md).
 - **Fin de job = résultat RunPod + rappel client.** `callback_url` (+ `callback_token` en Bearer) reçoit le même JSON,
   succès comme erreur, sans base64 ; le webhook natif RunPod reste le filet si le worker meurt. Coût = temps seulement
   (`timings` par étape + `executionTime` RunPod), pas d'estimation en dollars (décision 2026-09-09).
-- **Tout résultat = mono 24 kHz**, sans option (`OUTPUT_SR` / `OUTPUT_MONO` dans params.py) — décision 2026-09-09.
+- **Tout résultat = WAV mono 24 kHz 16 bits**, sans option (`OUTPUT_FORMAT` / `OUTPUT_SR` / `OUTPUT_MONO` dans params.py) — décision 2026-09-09.
 - **Conversions de canaux à gain 1, matrices explicites.** Jamais `-ac` seul : ffmpeg atténue mono→stéréo de 0,707
   et amplifie stéréo→mono de 1,414 (un WAV mono plateforme ressortait 3 dB trop bas). `pan=stereo|c0=c0|c1=c0` et
   `pan=mono|c0=0.5*c0+0.5*c1` dans `io_utils._channel_filter`, prouvés par `tests/test_ffmpeg_levels.py`.

@@ -1,7 +1,6 @@
 {
   "input": {
     "task": "instrumental",
-    "audio_url": "https://files.dubbingspark.com/exemple/audio.mp3",
-    "output_format": "wav"
+    "audio_url": "https://files.dubbingspark.com/exemple/audio.mp3"
   }
 }

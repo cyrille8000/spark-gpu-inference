@@ -6,10 +6,10 @@ from dataclasses import dataclass, field
 from .io_utils import InputError, check_url
 
 TASKS = ("instrumental", "vc")
-OUTPUT_FORMATS = ("wav", "mp3")
 MAX_REFS = 8
 
-# TOUT RÉSULTAT EST MONO 24 kHz (décision propriétaire, 2026-09-09) : ce n'est pas un paramètre.
+# TOUT RÉSULTAT EST UN WAV MONO 24 kHz 16 bits (décision propriétaire, 2026-09-09) : ce n'est pas un paramètre.
+OUTPUT_FORMAT = "wav"
 OUTPUT_SR = 24_000
 OUTPUT_MONO = True
 
@@ -55,13 +55,6 @@ def _float(inp: dict, key: str, lo: float, hi: float, default: float | None) -> 
     return v
 
 
-def _output_format(inp: dict, default: str) -> str:
-    fmt = str(inp.get("output_format", default)).lower()
-    if fmt not in OUTPUT_FORMATS:
-        raise InputError(f"output_format doit être parmi {OUTPUT_FORMATS}")
-    return fmt
-
-
 def _output_url(inp: dict) -> str | None:
     url = inp.get("output_url")
     return check_url(url, "output_url") if url else None
@@ -99,7 +92,6 @@ class VcParams:
 class InstrumentalRequest:
     audio_url: str
     output_url: str | None
-    output_format: str
 
 
 @dataclass
@@ -108,7 +100,6 @@ class VcRequest:
     ref_urls: list[str]
     prompt_url: str | None
     output_url: str | None
-    output_format: str
     params: VcParams = field(default_factory=VcParams)
 
 
@@ -116,7 +107,6 @@ def parse_instrumental(inp: dict) -> InstrumentalRequest:
     return InstrumentalRequest(
         audio_url=check_url(inp.get("audio_url"), "audio_url"),
         output_url=_output_url(inp),
-        output_format=_output_format(inp, "wav"),
     )
 
 
@@ -143,7 +133,6 @@ def parse_vc(inp: dict) -> VcRequest:
         ref_urls=refs,
         prompt_url=check_url(prompt, "prompt_url") if prompt else None,
         output_url=_output_url(inp),
-        output_format=_output_format(inp, "wav"),
         params=params,
     )
 

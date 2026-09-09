@@ -21,9 +21,8 @@ Commun aux deux tâches :
 |-------|------|--------|------|
 | `task` | `"instrumental"` \| `"vc"` | — | obligatoire |
 | `output_url` | URL | — | PUT présigné (R2/S3). Sans lui, le résultat revient en `audio_base64` (≤ 10 MB) |
-| `output_format` | `"wav"` \| `"mp3"` | `wav` | MP3 = libmp3lame VBR `-q:a 2` (comme la plateforme) |
 
-**Tout résultat est mono 24 kHz** (16 bits en WAV), sans option : c'est le format de la plateforme. Rééchantillonnage soxr,
+**Tout résultat est un WAV mono 24 kHz 16 bits**, sans option : c'est le format de la plateforme. Rééchantillonnage soxr,
 mixage mono à gain 1 (matrices `pan` explicites, jamais `-ac`).
 | `callback_url` | URL | — | rappel de fin de job : `POST` JSON du résultat (succès **ou** erreur), sans le base64 |
 | `callback_token` | string | — | envoyé en `Authorization: Bearer …` sur le rappel |
@@ -50,7 +49,7 @@ Sur OOM CUDA : libération des modèles résidents puis un second essai.
 ```json
 { "input": { "task": "vc", "source_url": "https://…", "ref_urls": ["https://…", "https://…"],
              "prompt_url": "https://…", "steps": 25, "temp": 0.8, "cfg": 0.7,
-             "ref_len": 10, "output_url": "https://…(PUT)", "output_format": "wav" } }
+             "ref_len": 10, "output_url": "https://…(PUT)" } }
 ```
 
 | Champ | Défaut | Rôle |
