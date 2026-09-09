@@ -12,3 +12,4 @@ __pycache__
 *.webm
 *.md
 test_input.json
+modal_app.py

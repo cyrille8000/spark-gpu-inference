@@ -89,6 +89,21 @@ chargé pour ce job. En cas d'échec, le même rappel part avec `{ "status": "er
 Pour `vc` s'ajoutent `seed`, `tail_passes`, les réglages appliqués et `warnings[]`.
 Erreurs : `{ "status": "error", "error": "…", "code": "bad_input" | "internal", "job_id": "…" }`. Une `bad_input` ne doit jamais être rejouée.
 
+## Modal (mêmes comptes que Demucs)
+
+`modal_app.py` déploie la **même image GHCR** sur Modal, sans rebuild : un endpoint web POST par compte, même JSON
+que RunPod posté directement (sans enveloppe `input`) plus `api_key` = le secret Modal `modal-api-key` déjà présent sur
+les cinq comptes. Un conteneur = un GPU = un job ; Modal répond quand c'est fini (pas de file à interroger).
+
+```bash
+MODAL_PROFILE=compte2 modal deploy modal_app.py            # un compte à la fois (profils de ~/.modal.toml)
+SPARK_IMAGE=ghcr.io/…:sha-xxxxxxx MODAL_PROFILE=… modal deploy modal_app.py   # épingler une autre image
+curl -X POST https://<workspace>--spark-gpu-inference-sparkinference-run.modal.run \n  -H 'Content-Type: application/json' -d '{"api_key":"…","task":"instrumental","audio_url":"https://…"}'
+```
+
+Le package GHCR doit être public, ou chaque compte doit porter un secret `ghcr-pull` (`REGISTRY_USERNAME`,
+`REGISTRY_PASSWORD` = jeton GitHub `read:packages`) et le déploiement se fait avec `GHCR_PRIVATE=1`.
+
 ## Build, CI, déploiement
 
 - **CI** : `.github/workflows/docker-build.yml` — push sur `main` (ou lancement manuel) → `ghcr.io/<owner>/spark-gpu-inference:latest` et `:sha-<commit>`. Le build télécharge les poids (≈ 0,27 GB BS-Roformer + 1 GB Chatterbox) et exécute `scripts/smoke_test.py` **hors ligne sur CPU** : chargement de chaque modèle et une vraie passe avant BS-Roformer sur 2 s de bruit. L'image n'est publiée que si tout passe.
@@ -106,8 +121,10 @@ Variables optionnelles : `SPARK_MAX_DOWNLOAD_MB` (2048), `SPARK_INLINE_LIMIT_MB`
 ## Arborescence
 
 ```
-handler.py                       # entrée RunPod : dispatch par task, erreurs typées
+handler.py                       # entrée RunPod (progression + start)
+modal_app.py                     # entrée Modal : endpoint web POST, même image, même contrat + api_key
 src/spark_infer/
+├── service.py                   # process_job : parsing, exécution, erreurs typées, rappel — commun RunPod/Modal
 ├── params.py                    # validation des entrées (pure)
 ├── tasks.py                     # téléchargement → modèle → encodage → livraison, rejeu OOM
 ├── separation_engine.py         # InstrumentalSeparator (BS-Roformer Leap Xe via BSRoformerSession)

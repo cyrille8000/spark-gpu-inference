@@ -38,6 +38,9 @@ Détails du contrat : [README.md](README.md).
   chatterbox-tts est installé `--no-deps` pour ne pas embarquer gradio ; ses dépendances sont listées dans
   `requirements.txt`. `pip check` du Dockerfile bloque tout autre conflit.
 
+- **Un seul traitement, deux hébergeurs.** `spark_infer/service.py::process_job` est appelé par `handler.py` (RunPod)
+  et `modal_app.py` (Modal, même image GHCR via `Image.from_registry`, secret `modal-api-key`). Ne rien dupliquer.
+
 ## Commandes
 
 ```bash
