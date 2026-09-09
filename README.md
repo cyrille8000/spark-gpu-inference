@@ -101,7 +101,8 @@ SPARK_IMAGE=ghcr.io/…:sha-xxxxxxx MODAL_PROFILE=… modal deploy modal_app.py 
 curl -X POST https://<workspace>--spark-gpu-inference-sparkinference-run.modal.run \n  -H 'Content-Type: application/json' -d '{"api_key":"…","task":"instrumental","audio_url":"https://…"}'
 ```
 
-Côté plateforme, tout est dans Doppler `prd` (propagé aux branches CF et OCI) : `SPARK_GPU_MODAL_ENDPOINT_URLS` (les six URL,
+Côté plateforme, tout est dans Doppler **`prd_cloudflare-workers` seulement** (décision du 2026-09-09 : l'OCI n'a plus
+besoin des clés Modal/RunPod ; ne pas les remonter dans `prd`, la racine propage partout) : `SPARK_GPU_MODAL_ENDPOINT_URLS` (les six URL,
 séparées par des virgules), `SPARK_GPU_MODAL_API_KEY`, `SPARK_GPU_MODAL_MAX_CONCURRENT` (10 par compte), et pour RunPod
 `SPARK_GPU_RUNPOD_ENDPOINT_ID` + `SPARK_GPU_RUNPOD_API_KEY` + `SPARK_GPU_RUNPOD_MAX_CONCURRENT` (20 : le plafond
 d'appels simultanés côté appelant ; le « Max workers » de l'endpoint RunPod doit être au moins égal). `MODAL_ENDPOINT_URL` / `MODAL_API_KEY` restent ceux de Demucs.
