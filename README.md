@@ -24,11 +24,25 @@ Commun aux deux tâches :
 
 **Tout résultat est un WAV mono 24 kHz 16 bits**, sans option : c'est le format de la plateforme. Rééchantillonnage soxr,
 mixage mono à gain 1 (matrices `pan` explicites, jamais `-ac`).
-| `callback_url` | URL | — | rappel de fin de job : `POST` JSON du résultat (succès **ou** erreur), sans le base64 |
-| `callback_token` | string | — | envoyé en `Authorization: Bearer …` sur le rappel |
+| `callback_url` | URL | — | rappels de l'image : `started`, `heartbeat`, `finished` (`POST` JSON, voir ci-dessous) |
+| `callback_token` | string | — | envoyé en `Authorization: Bearer …` sur chaque rappel |
+| `meta` | objet | — | OPAQUE : renvoyé tel quel dans chaque rappel et dans le résultat (projet, portion, tentative, compte…) |
+| `heartbeat_s` | int | 30 | cadence des battements (5..300 s) |
 
-Le rappel de l'image est le chemin normal (en-tête Bearer, même schéma que la Lambda). Ajoutez aussi le champ natif
-`"webhook"` dans l'appel `/run` de RunPod : lui seul part si le worker meurt ou dépasse son timeout.
+### Rappels (`callback_url`)
+
+L'image raconte le job à la plateforme, qui n'a donc aucune connexion à tenir ouverte. Chaque rappel porte `event`,
+`seq` (compteur croissant par job), `job_id`, `task`, `meta`, `provider` (`modal` | `runpod`) et `sent_at` (ISO UTC).
+
+| `event` | Quand | En plus |
+|---------|-------|---------|
+| `started` | avant tout travail | `started_at`, `gpu_name`, `device`, `container_first_job` (conteneur neuf ?), `container_uptime_s`, `models_loaded` |
+| `heartbeat` | toutes les `heartbeat_s` secondes | `elapsed_s`, `progress` (dernier `{percent, message}`) |
+| `finished` | à la fin, succès **ou** erreur | le résultat ENTIER (sans base64) : `container_s`, `timings`, `bytes`, `sha256`, `uploaded`… |
+
+Un rappel raté (3 essais pour `started`/`finished`, 1 pour `heartbeat`) n'échoue jamais le job : le résultat reste
+lisible côté hébergeur (`/status` RunPod, action `status` Modal). Ajoutez aussi le champ natif `"webhook"` dans
+l'appel `/run` de RunPod : lui seul part si le worker meurt ou dépasse son timeout.
 
 ### `task: "instrumental"`
 
@@ -77,6 +91,8 @@ Un seul tirage par job (décision du 2026-09-09) : pas de best-of-N, donc ni sco
   "format": "wav", "bytes": 8640044, "sha256": "…", "uploaded": true,
   "duration_s": 180.0, "sample_rate": 24000, "channels": 1, "attempts": 1,
   "elapsed_s": 21.4, "cold_start": true, "container_s": 27.9, "container_first_job": true,
+  "started_at": "2026-09-09T20:01:02.123Z", "finished_at": "2026-09-09T20:01:24.011Z",
+  "meta": { "project": "…", "portion": 3, "run": "sep_…", "attempt": 1 }, "provider": "modal", "heartbeats": 0,
   "timings": { "download_s": 0.8, "decode_s": 0.4, "model_load_s": 6.1, "inference_s": 12.9, "encode_s": 0.3, "upload_s": 0.9 },
   "device": "cuda", "gpu_name": "NVIDIA L4", "models_loaded": ["bs_roformer_leap_xe"],
   "callback_delivered": true }
@@ -95,7 +111,10 @@ Erreurs : `{ "status": "error", "error": "…", "code": "bad_input" | "internal"
 
 `modal_app.py` déploie la **même image GHCR** sur Modal, sans rebuild : un endpoint web POST par compte, même JSON
 que RunPod posté directement (sans enveloppe `input`) plus `api_key` = le secret Modal `modal-api-key` déjà présent sur
-les six comptes. Un conteneur = un GPU = un job ; Modal répond quand c'est fini (pas de file à interroger).
+les six comptes. **Asynchrone (2026-09-09)** : `{"action":"submit", …}` répond tout de suite `{"status":"queued",
+"job_id", "call_id"}` et le job tourne dans un conteneur GPU à part (`SparkGpu.process`, lancé par `spawn`) ; l'image
+prévient par rappels. Le même endpoint sert de sonde `{"action":"status","call_id"}` → `running` | `completed`
+(+ `result`) | `failed`, et de coupe-circuit `{"action":"cancel","call_id"}`. Un conteneur = un GPU = un job.
 
 ```bash
 MODAL_PROFILE=compte2 modal deploy modal_app.py            # un compte à la fois (profils de ~/.modal.toml)

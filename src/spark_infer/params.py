@@ -66,6 +66,22 @@ class Callback:
     token: str | None
 
 
+def parse_meta(inp: dict) -> dict | None:
+    """`meta` : objet OPAQUE de l'appelant (projet, portion, tentative, compte…), renvoyé tel quel
+    dans chaque rappel et dans le résultat. Tout sauf un objet est ignoré."""
+    m = inp.get("meta")
+    return dict(m) if isinstance(m, dict) else None
+
+
+def parse_heartbeat_s(inp: dict, default: int = 30) -> int:
+    """Cadence des battements (s), 5..300. Hors bornes ou illisible : le défaut."""
+    try:
+        v = int(inp.get("heartbeat_s", default))
+    except (TypeError, ValueError):
+        return default
+    return v if 5 <= v <= 300 else default
+
+
 def parse_callback(inp: dict) -> Callback | None:
     """Rappel de fin de job : POST JSON sur `callback_url`, `Authorization: Bearer <callback_token>` si fourni.
     Lu avec tolérance : un rappel malformé n'empêche pas le job, il est juste ignoré (et signalé)."""

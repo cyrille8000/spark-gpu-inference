@@ -17,6 +17,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
+os.environ.setdefault("SPARK_PROVIDER", "runpod")  # nommé dans chaque rappel et dans le résultat
+
 import runpod  # noqa: E402
 
 from spark_infer.service import process_job  # noqa: E402

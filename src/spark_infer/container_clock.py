@@ -22,8 +22,18 @@ class ContainerClock:
     """Un compteur par processus. Pas de verrou : un job à la fois par conteneur."""
 
     def __init__(self, now: float | None = None) -> None:
-        self._last = time.monotonic() if now is None else now
+        self._start = time.monotonic() if now is None else now
+        self._last = self._start
         self._jobs = 0
+
+    def is_first(self) -> bool:
+        """Vrai tant qu'aucun job n'a fermé sa fenêtre : le job en cours est le premier du conteneur."""
+        return self._jobs == 0
+
+    def uptime(self, now: float | None = None) -> float:
+        """Secondes depuis le démarrage du processus."""
+        t = time.monotonic() if now is None else now
+        return max(0.0, t - self._start)
 
     def window(self, now: float | None = None) -> tuple[float, bool]:
         """Ferme la fenêtre courante : (secondes depuis le rapport précédent, premier job du conteneur ?)."""

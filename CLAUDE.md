@@ -22,9 +22,13 @@ Détails du contrat : [README.md](README.md).
 - **VC `steps` = 25 par défaut** (choix propriétaire 2026-09-09 ; défaut interne de Chatterbox : 10).
 - **Chatterbox réglé par job, jamais empilé.** `VoiceConverter` garde les méthodes d'origine (`_orig_*`) et reconstruit
   les `functools.partial` à chaque job ; sinon les réglages s'accumulent d'un job à l'autre sur le modèle résident.
-- **Fin de job = résultat RunPod + rappel client.** `callback_url` (+ `callback_token` en Bearer) reçoit le même JSON,
-  succès comme erreur, sans base64 ; le webhook natif RunPod reste le filet si le worker meurt. Coût = temps seulement
-  (`timings` par étape + `executionTime` RunPod), pas d'estimation en dollars (décision 2026-09-09).
+- **L'image raconte le job (2026-09-09).** `callback_url` (+ `callback_token` en Bearer) reçoit `started`, des
+  `heartbeat` (toutes les `heartbeat_s`, défaut 30 s) et `finished` (le résultat entier sans base64), chacun avec `meta`
+  (opaque, renvoyé tel quel), `seq`, `provider` — `src/spark_infer/webhooks.py`. La plateforme ne tient aucune
+  connexion ouverte ; le webhook natif RunPod reste le filet si le worker meurt. Un rappel raté n'échoue jamais le job.
+- **Modal asynchrone.** `modal_app.py` : `SparkInference.run` (CPU, image slim) = `submit` → `spawn` de `SparkGpu.process`
+  (GPU) + `status` + `cancel` ; l'URL de l'endpoint est inchangée. Coût = temps seulement (`container_s`, `timings`,
+  `executionTime` RunPod), pas d'estimation en dollars.
 - **Tout résultat = WAV mono 24 kHz 16 bits**, sans option (`OUTPUT_FORMAT` / `OUTPUT_SR` / `OUTPUT_MONO` dans params.py) — décision 2026-09-09.
 - **Conversions de canaux à gain 1, matrices explicites.** Jamais `-ac` seul : ffmpeg atténue mono→stéréo de 0,707
   et amplifie stéréo→mono de 1,414 (un WAV mono plateforme ressortait 3 dB trop bas). `pan=stereo|c0=c0|c1=c0` et
