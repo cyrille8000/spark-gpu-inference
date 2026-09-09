@@ -103,7 +103,8 @@ curl -X POST https://<workspace>--spark-gpu-inference-sparkinference-run.modal.r
 
 Côté plateforme, tout est dans Doppler `prd` (propagé aux branches CF et OCI) : `SPARK_GPU_MODAL_ENDPOINT_URLS` (les six URL,
 séparées par des virgules), `SPARK_GPU_MODAL_API_KEY`, `SPARK_GPU_MODAL_MAX_CONCURRENT` (10 par compte), et pour RunPod
-`SPARK_GPU_RUNPOD_ENDPOINT_ID` + `SPARK_GPU_RUNPOD_API_KEY`. `MODAL_ENDPOINT_URL` / `MODAL_API_KEY` restent ceux de Demucs.
+`SPARK_GPU_RUNPOD_ENDPOINT_ID` + `SPARK_GPU_RUNPOD_API_KEY` + `SPARK_GPU_RUNPOD_MAX_CONCURRENT` (20 : le plafond
+d'appels simultanés côté appelant ; le « Max workers » de l'endpoint RunPod doit être au moins égal). `MODAL_ENDPOINT_URL` / `MODAL_API_KEY` restent ceux de Demucs.
 
 Le package GHCR doit être public, ou chaque compte doit porter un secret `ghcr-pull` (`REGISTRY_USERNAME`,
 `REGISTRY_PASSWORD` = jeton GitHub `read:packages`) et le déploiement se fait avec `GHCR_PRIVATE=1`.
