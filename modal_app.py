@@ -2,7 +2,7 @@
 
 Reprend le schéma de `demucs-separation` : image GHCR prise telle quelle (`Image.from_registry`,
 aucun rebuild), clé partagée `MODAL_API_KEY` lue dans le secret Modal `modal-api-key` (déjà
-présent sur les cinq comptes), un conteneur = un GPU = un job à la fois, ce qui laisse le
+présent sur les six comptes), un conteneur = un GPU = un job à la fois, ce qui laisse le
 client rond-robin de l'orchestrateur compter 10 jobs simultanés par compte.
 
 Contrat : le MÊME JSON que RunPod (`README.md`), posté directement (pas de champ `input`),

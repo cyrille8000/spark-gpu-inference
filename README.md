@@ -93,7 +93,7 @@ Erreurs : `{ "status": "error", "error": "…", "code": "bad_input" | "internal"
 
 `modal_app.py` déploie la **même image GHCR** sur Modal, sans rebuild : un endpoint web POST par compte, même JSON
 que RunPod posté directement (sans enveloppe `input`) plus `api_key` = le secret Modal `modal-api-key` déjà présent sur
-les cinq comptes. Un conteneur = un GPU = un job ; Modal répond quand c'est fini (pas de file à interroger).
+les six comptes. Un conteneur = un GPU = un job ; Modal répond quand c'est fini (pas de file à interroger).
 
 ```bash
 MODAL_PROFILE=compte2 modal deploy modal_app.py            # un compte à la fois (profils de ~/.modal.toml)
