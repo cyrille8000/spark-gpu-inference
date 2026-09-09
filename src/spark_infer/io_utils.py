@@ -91,11 +91,15 @@ def ffprobe_duration(path: Path) -> float:
         return 0.0
 
 
-def encode_output(wav_path: Path, out_path: Path, fmt: str, mono: bool, mp3_quality: int = 2) -> Path:
-    """WAV float32 → WAV 16 bits ou MP3 (libmp3lame VBR, -q:a 2 comme la plateforme)."""
+def encode_output(wav_path: Path, out_path: Path, fmt: str, mono: bool, sr: int | None = None,
+                  mp3_quality: int = 2) -> Path:
+    """WAV float32 → WAV 16 bits ou MP3 (libmp3lame VBR, -q:a 2 comme la plateforme).
+    `sr` : rééchantillonnage de sortie (soxr) ; None = fréquence d'entrée."""
     args = ["-i", str(wav_path)]
     if mono:
         args += ["-ac", "1"]
+    if sr:
+        args += ["-af", "aresample=resampler=soxr", "-ar", str(sr)]
     if fmt == "mp3":
         args += ["-codec:a", "libmp3lame", "-q:a", str(mp3_quality), str(out_path)]
     elif fmt == "wav":
@@ -149,3 +153,26 @@ def deliver(path: Path, output_url: str | None, fmt: str) -> dict:
             f"le retour inline est limité à {INLINE_LIMIT_BYTES >> 20} MB")
     out["audio_base64"] = base64.b64encode(path.read_bytes()).decode("ascii")
     return out
+
+
+def send_callback(url: str, token: str | None, payload: dict, retries: int = 3) -> bool:
+    """POST JSON du résultat final sur le rappel du client. N'échoue jamais le job : renvoie False si KO.
+    Le webhook natif RunPod (champ `webhook` de /run) reste le filet de sécurité si le worker meurt."""
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    last: str = ""
+    for attempt in range(1, retries + 1):
+        try:
+            r = requests.post(url, json=payload, headers=headers, timeout=30)
+            if r.status_code < 300:
+                log.info("rappel OK (%d) → %s", r.status_code, _short(url))
+                return True
+            last = f"{r.status_code} {r.text[:200]}"
+            if 400 <= r.status_code < 500 and r.status_code != 429:
+                break
+        except requests.RequestException as e:
+            last = str(e)
+        time.sleep(2 * attempt)
+    log.error("rappel échoué après %d tentatives → %s : %s", retries, _short(url), last)
+    return False

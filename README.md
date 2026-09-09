@@ -20,19 +20,27 @@ Commun aux deux tâches :
 |-------|------|--------|------|
 | `task` | `"instrumental"` \| `"vc"` | — | obligatoire |
 | `output_url` | URL | — | PUT présigné (R2/S3). Sans lui, le résultat revient en `audio_base64` (≤ 10 MB) |
-| `output_format` | `"wav"` \| `"mp3"` | `mp3` (instrumental) / `wav` (vc) | MP3 = libmp3lame VBR `-q:a 2` (comme la plateforme) |
+| `output_format` | `"wav"` \| `"mp3"` | `wav` | MP3 = libmp3lame VBR `-q:a 2` (comme la plateforme) |
+| `output_sr` | 8000..48000 | 24000 | fréquence de sortie (rééchantillonnage soxr à l'encodage) |
+| `callback_url` | URL | — | rappel de fin de job : `POST` JSON du résultat (succès **ou** erreur), sans le base64 |
+| `callback_token` | string | — | envoyé en `Authorization: Bearer …` sur le rappel |
+
+Le rappel de l'image est le chemin normal (en-tête Bearer, même schéma que la Lambda). Ajoutez aussi le champ natif
+`"webhook"` dans l'appel `/run` de RunPod : lui seul part si le worker meurt ou dépasse son timeout.
 
 ### `task: "instrumental"`
 
 ```json
 { "input": { "task": "instrumental", "audio_url": "https://…", "output_url": "https://…(PUT)",
-             "output_format": "mp3", "mono": true } }
+             "callback_url": "https://api.dubbingspark.com/api/internal/gpu-complete", "callback_token": "…" } }
 ```
 
 | Champ | Défaut | Rôle |
 |-------|--------|------|
-| `audio_url` | — | n'importe quel conteneur/codec (décodé et rééchantillonné en 44,1 kHz stéréo par ffmpeg) |
-| `mono` | `false` | mixage mono en sortie |
+| `audio_url` | — | mp3, wav, m4a, mp4… (décodé et rééchantillonné en 44,1 kHz stéréo par ffmpeg pour le modèle) |
+| `mono` | `true` | mixage mono en sortie |
+
+Défauts = l'instrumental de la plateforme : **WAV 24 kHz mono 16 bits**.
 
 Découpage fenêtré du modèle : chunks de 881 559 échantillons (20 s), recouvrement 2, fondu aux jonctions.
 Sur OOM CUDA : libération des modèles résidents puis un second essai.
@@ -57,7 +65,6 @@ Sur OOM CUDA : libération des modèles résidents puis un second essai.
 | `overlap` | 1.0 | fondu de la complétion de queue (s) |
 | `preproc` | `true` | passe-haut 70 Hz + sonie −23 LUFS sur la source |
 | `seed` | 1000 | graine du tirage (résultat reproductible) |
-| `output_sr` | 24000 | rééchantillonnage de sortie (8000..48000) |
 
 La sortie est mono. Le filigrane Perth de Chatterbox est conservé (comportement natif de `generate`).
 Un seul tirage par job (décision du 2026-09-09) : pas de best-of-N, donc ni scorer ECAPA, ni Whisper, ni `resemble-enhance`.
@@ -65,15 +72,22 @@ Un seul tirage par job (décision du 2026-09-09) : pas de best-of-N, donc ni sco
 ## Sortie
 
 ```json
-{ "status": "completed", "task": "instrumental", "job_id": "…", "elapsed_s": 12.3,
+{ "status": "completed", "task": "instrumental", "job_id": "…",
   "model": "roformer-model-bs-roformer-leap-xe-instrumental-by-pcunwa",
-  "format": "mp3", "bytes": 480044, "sha256": "…", "uploaded": true,
-  "duration_s": 180.0, "sample_rate": 44100, "channels": 1, "attempts": 1,
-  "device": "cuda", "models_loaded": ["bs_roformer_leap_xe"] }
+  "format": "wav", "bytes": 8640044, "sha256": "…", "uploaded": true,
+  "duration_s": 180.0, "sample_rate": 24000, "channels": 1, "attempts": 1,
+  "elapsed_s": 21.4, "cold_start": true,
+  "timings": { "download_s": 0.8, "decode_s": 0.4, "model_load_s": 6.1, "inference_s": 12.9, "encode_s": 0.3, "upload_s": 0.9 },
+  "device": "cuda", "gpu_name": "NVIDIA L4", "models_loaded": ["bs_roformer_leap_xe"],
+  "callback_delivered": true }
 ```
 
+`timings` est le temps mesuré par l'image, étape par étape ; `executionTime` du statut RunPod reste la référence
+de facturation (le démarrage à froid du conteneur n'est dans aucun des deux). `cold_start` dit si le modèle a dû être
+chargé pour ce job. En cas d'échec, le même rappel part avec `{ "status": "error", "error", "code" }`.
+
 Pour `vc` s'ajoutent `seed`, `tail_passes`, les réglages appliqués et `warnings[]`.
-Erreurs : `{ "error": "…", "code": "bad_input" | "internal", "job_id": "…" }`. Une `bad_input` ne doit jamais être rejouée.
+Erreurs : `{ "status": "error", "error": "…", "code": "bad_input" | "internal", "job_id": "…" }`. Une `bad_input` ne doit jamais être rejouée.
 
 ## Build, CI, déploiement
 

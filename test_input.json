@@ -2,7 +2,8 @@
   "input": {
     "task": "instrumental",
     "audio_url": "https://files.dubbingspark.com/exemple/audio.mp3",
-    "output_format": "mp3",
+    "output_format": "wav",
+    "output_sr": 24000,
     "mono": true
   }
 }

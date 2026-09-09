@@ -20,6 +20,10 @@ Détails du contrat : [README.md](README.md).
 - **VC `steps` = 25 par défaut** (choix propriétaire 2026-09-09 ; défaut interne de Chatterbox : 10).
 - **Chatterbox réglé par job, jamais empilé.** `VoiceConverter` garde les méthodes d'origine (`_orig_*`) et reconstruit
   les `functools.partial` à chaque job ; sinon les réglages s'accumulent d'un job à l'autre sur le modèle résident.
+- **Fin de job = résultat RunPod + rappel client.** `callback_url` (+ `callback_token` en Bearer) reçoit le même JSON,
+  succès comme erreur, sans base64 ; le webhook natif RunPod reste le filet si le worker meurt. Coût = temps seulement
+  (`timings` par étape + `executionTime` RunPod), pas d'estimation en dollars (décision 2026-09-09).
+- **Instrumental par défaut = WAV 24 kHz mono 16 bits**, comme l'instrumental de la plateforme.
 - **Erreurs typées.** `InputError` → `code: bad_input` (ne jamais rejouer) ; le reste → `code: internal`. Un OOM CUDA
   libère les modèles (`registry.release()`) et rejoue une fois.
 - **Pins.** torch/torchaudio 2.6.0 cu124 (exigés par chatterbox-tts 0.1.7), numpy < 2, bs-roformer-infer épinglé sur

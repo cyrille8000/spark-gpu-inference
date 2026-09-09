@@ -6,7 +6,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from spark_infer.io_utils import InputError  # noqa: E402
-from spark_infer.params import parse_instrumental, parse_task, parse_vc  # noqa: E402
+from spark_infer.params import parse_callback, parse_instrumental, parse_task, parse_vc  # noqa: E402
 
 URL = "https://example.com/a.wav"
 
@@ -20,9 +20,9 @@ def test_task_required():
         parse_task({})
 
 
-def test_instrumental_defaults():
+def test_instrumental_defaults_match_platform_instrumental():
     r = parse_instrumental({"audio_url": URL})
-    assert r.output_format == "mp3" and r.mono is False and r.output_url is None
+    assert r.output_format == "wav" and r.output_sr == 24000 and r.mono is True and r.output_url is None
 
 
 def test_instrumental_validation():
@@ -34,8 +34,20 @@ def test_instrumental_validation():
         parse_instrumental({"audio_url": URL, "output_format": "flac"})
     with pytest.raises(InputError):
         parse_instrumental({"audio_url": URL, "mono": "peut-être"})
-    r = parse_instrumental({"audio_url": URL, "output_url": URL, "mono": "true", "output_format": "WAV"})
-    assert r.mono is True and r.output_url == URL and r.output_format == "wav"
+    with pytest.raises(InputError):
+        parse_instrumental({"audio_url": URL, "output_sr": 96000})
+    r = parse_instrumental({"audio_url": URL, "output_url": URL, "mono": "false", "output_format": "MP3",
+                            "output_sr": 44100})
+    assert r.mono is False and r.output_url == URL and r.output_format == "mp3" and r.output_sr == 44100
+
+
+def test_callback():
+    assert parse_callback({}) is None
+    cb = parse_callback({"callback_url": URL, "callback_token": "abc"})
+    assert cb.url == URL and cb.token == "abc"
+    assert parse_callback({"callback_url": URL}).token is None
+    with pytest.raises(InputError):
+        parse_callback({"callback_url": "not-a-url"})
 
 
 def test_vc_defaults_and_ref_url_alias():

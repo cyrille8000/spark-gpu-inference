@@ -64,6 +64,22 @@ def _output_url(inp: dict) -> str | None:
 
 
 @dataclass
+class Callback:
+    url: str
+    token: str | None
+
+
+def parse_callback(inp: dict) -> Callback | None:
+    """Rappel de fin de job : POST JSON sur `callback_url`, `Authorization: Bearer <callback_token>` si fourni.
+    Lu avec tolérance : un rappel malformé n'empêche pas le job, il est juste ignoré (et signalé)."""
+    url = inp.get("callback_url")
+    if not url:
+        return None
+    token = inp.get("callback_token")
+    return Callback(check_url(url, "callback_url"), str(token) if token else None)
+
+
+@dataclass
 class VcParams:
     steps: int = 25            # pas du flow matching (n_cfm_timesteps) — choix propriétaire 2026-09-09
     temp: float = 0.8          # temperature du décodeur
@@ -81,6 +97,7 @@ class InstrumentalRequest:
     audio_url: str
     output_url: str | None
     output_format: str
+    output_sr: int          # le modèle travaille en 44,1 kHz ; rééchantillonné à l'encodage
     mono: bool
 
 
@@ -99,8 +116,9 @@ def parse_instrumental(inp: dict) -> InstrumentalRequest:
     return InstrumentalRequest(
         audio_url=check_url(inp.get("audio_url"), "audio_url"),
         output_url=_output_url(inp),
-        output_format=_output_format(inp, "mp3"),
-        mono=_bool(inp, "mono", False),
+        output_format=_output_format(inp, "wav"),
+        output_sr=_int(inp, "output_sr", 8000, 48000, 24000),  # type: ignore[arg-type]
+        mono=_bool(inp, "mono", True),
     )
 
 

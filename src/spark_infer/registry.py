@@ -56,3 +56,13 @@ def vram_total_gb() -> float | None:
         return torch.cuda.get_device_properties(0).total_memory / 1e9
     except Exception:  # noqa: BLE001
         return None
+
+
+def gpu_name() -> str | None:
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return None
+        return torch.cuda.get_device_name(0)
+    except Exception:  # noqa: BLE001
+        return None
