@@ -28,10 +28,22 @@ class InstrumentalSeparator:
         ).load()
         from bs_roformer.backends.base import ChunkingPlan
 
-        cfg = self.session._config  # ConfigDict chargé par load() ; lu, jamais modifié
+        cfg = self.session._config  # ConfigDict chargé par load()
         self.stem = cfg.training.target_instrument or "other"
         # chunk_size vit sous `audio:` dans la config Leap Xe (sous `inference:` dans d'autres) :
         # ChunkingPlan est l'unique endroit du paquet qui connaît les deux emplacements
+        plan = ChunkingPlan.from_config(cfg)
+        # LE CHUNK DOIT ÊTRE UN MULTIPLE DU PAS STFT. Le modèle reconstruit par `torch.istft`
+        # sans `length=` : la sortie fait hop × (n_frames − 1), soit 881 152 pour le chunk
+        # Leap Xe de 881 559 — 407 échantillons de moins que l'entrée, et l'addition fenêtrée
+        # de bs-roformer-infer échoue sur tout chunk PLEIN (« size of tensor a must match … »).
+        # Un chunk aligné (881 152, soit 0,05 % de moins) ressort exactement à sa taille ; le
+        # transformeur ne dépend pas de la longueur de fenêtre, la qualité est inchangée.
+        hop = int(cfg.model.stft_hop_length)
+        aligned = (int(plan.chunk_size) // hop) * hop
+        if aligned != int(plan.chunk_size):
+            cfg.inference.chunk_size = aligned  # lu en priorité par ChunkingPlan à chaque demix
+            log.info("chunk %d non multiple du pas STFT %d → aligné à %d", plan.chunk_size, hop, aligned)
         plan = ChunkingPlan.from_config(cfg)
         self.chunk_size = int(plan.chunk_size)
         self.num_overlap = int(plan.num_overlap)

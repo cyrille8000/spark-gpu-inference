@@ -24,11 +24,16 @@ def check_bsroformer() -> None:
     from spark_infer.tasks import BSROFORMER_DIR
 
     sep = InstrumentalSeparator(BSROFORMER_DIR, device="cpu")
-    # 2 s de bruit stéréo : prouve que config + checkpoint + passe avant sont cohérents
+    assert sep.chunk_size % 512 == 0, f"chunk {sep.chunk_size} non aligné sur le pas STFT"
+    # UN PEU PLUS D'UN CHUNK de bruit stéréo (≈ 20,5 s) : exercer la branche « chunk PLEIN » de
+    # l'addition fenêtrée, pas seulement la branche « chunk complété » qu'un extrait de 2 s
+    # emprunte — c'est la première qui cassait sur le chunk Leap Xe (881 559, non aligné).
+    # Deux passes avant sur CPU, ~13 min sur le runner : c'est le prix de la preuve.
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         rng = np.random.default_rng(0)
-        mix = (0.1 * rng.standard_normal((2 * SAMPLE_RATE, 2))).astype(np.float32)
+        n = sep.chunk_size + SAMPLE_RATE // 2
+        mix = (0.1 * rng.standard_normal((n, 2))).astype(np.float32)
         sf.write(tmp / "mix.wav", mix, SAMPLE_RATE, subtype="FLOAT")
         out = sep.separate(tmp / "mix.wav", tmp)
         y, sr = sf.read(out, dtype="float32")
