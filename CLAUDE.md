@@ -14,7 +14,7 @@ Détails du contrat : [README.md](README.md).
   `roformer-model-bs-roformer-leap-xe-instrumental-by-pcunwa` dans bs-roformer-infer), choisi le 2026-09-09 sur le
   Multisong de MVSEP (18,07 dB instrumental) à la place de l'ensemble Demucs/MDX de la plateforme (~17,5). Le stem de
   sortie s'appelle `other` dans la config du modèle : c'est l'instrumental (`target_instrument: other`).
-- **Python 3.11 obligatoire** : bs-roformer-infer importe `tomllib`. Base `python:3.11-slim`, torch cu124 par pip
+- **Python 3.11 obligatoire** : bs-roformer-infer importe `tomllib`. Base `python:3.11-slim`, torch cu128 par pip
   (pas de CUDA système, plus d'ONNX Runtime).
 - **VC : un seul tirage.** Pas de best-of-N (décision 2026-09-09) → ni ECAPA/speechbrain, ni Whisper, ni resemble-enhance.
 - **VC : queue collée, pas de fondu.** Si la sortie est plus courte que la source, le reste est reconverti et concaténé
@@ -29,7 +29,8 @@ Détails du contrat : [README.md](README.md).
 - **Erreurs typées.** `InputError` → `code: bad_input` (ne jamais rejouer) ; le reste → `code: internal`. Un OOM CUDA
   libère les modèles (`registry.release()`) et rejoue une fois.
 - **Pins.** setuptools < 82 (resemble-perth importe `pkg_resources`, supprimé en 82 ; sinon le filigrane Chatterbox
-  vaut None), torch/torchaudio 2.6.0 cu124 (exigés par chatterbox-tts 0.1.7), numpy < 2, bs-roformer-infer épinglé sur
+  vaut None), torch/torchaudio 2.7.1 **cu128** (le pool 24 GB RunPod sert des Blackwell sm_120 que cu124 ne sait pas exécuter ;
+  chatterbox-tts 0.1.7 épingle 2.6.0 mais est installé --no-deps), numpy < 2, bs-roformer-infer épinglé sur
   le commit GitHub `b0f1386f` (la roue PyPI 0.1.5 n'a ni l'entrée Leap ni `mlp_expansion_factor`).
   chatterbox-tts est installé `--no-deps` pour ne pas embarquer gradio ; ses dépendances sont listées dans
   `requirements.txt`. `pip check` du Dockerfile bloque tout autre conflit.

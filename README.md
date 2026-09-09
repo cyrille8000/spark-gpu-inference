@@ -10,7 +10,8 @@ Une seule image, deux tâches choisies par le paramètre `task` du job :
 Tous les poids sont dans l'image (`/models`). À l'inférence, `HF_HUB_OFFLINE=1` et le checkpoint BS-Roformer est
 résolu localement : **aucun téléchargement de modèle**. Les modèles restent résidents entre deux jobs d'un même worker.
 
-Base `python:3.11-slim` + torch 2.6.0 cu124 : les roues torch embarquent CUDA/cuDNN, seul le pilote de l'hôte est requis.
+Base `python:3.11-slim` + torch 2.7.1 cu128 (noyaux jusqu'à Blackwell sm_120, présent dans le pool 24 GB de RunPod) : les roues
+torch embarquent CUDA/cuDNN, seul le pilote de l'hôte est requis.
 
 ## Contrat d'entrée
 

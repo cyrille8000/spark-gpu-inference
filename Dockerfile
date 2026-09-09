@@ -3,7 +3,7 @@
 #   task "instrumental" : BS-Roformer Leap Xe (unwa) — instrumental seul
 #   task "vc"           : conversion de timbre Chatterbox VC (S3Gen), un tirage
 # Tout est embarqué au build (paquets + poids) : zéro téléchargement à l'inférence.
-# Base Python pure : les roues torch cu124 embarquent leurs bibliothèques CUDA/cuDNN,
+# Base Python pure : les roues torch cu128 embarquent leurs bibliothèques CUDA/cuDNN,
 # seul le pilote de l'hôte RunPod est nécessaire.
 #
 # BUILD :  docker build --platform linux/amd64 -t spark-gpu-inference .
@@ -32,15 +32,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # setuptools < 82 : resemble-perth (filigrane de Chatterbox) importe encore `pkg_resources`, supprimé en 82.0.0 ;
 # sans lui perth.PerthImplicitWatermarker vaut None et ChatterboxVC ne se construit plus.
 
-# ---------------------------------------------------------------- [2/5] PyTorch 2.6.0 (pin de chatterbox-tts) — CUDA 12.4
-RUN pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124 \
+# ---------------------------------------------------------------- [2/5] PyTorch 2.7.1 — CUDA 12.8 (noyaux sm_50 → sm_120)
+# cu128 obligatoire : le pool 24 GB de RunPod sert des RTX PRO 6000 Blackwell (MIG, sm_120), que cu124 ne sait pas
+# exécuter (« no kernel image is available »). chatterbox-tts épingle torch 2.6.0 mais est installé --no-deps.
+RUN pip install torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128 \
     && python -c "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
 
 # ---------------------------------------------------------------- [3/5] paquets Python
 COPY requirements.txt /app/requirements.txt
 RUN pip install -r /app/requirements.txt \
     && pip install --no-deps chatterbox-tts==0.1.7 \
-    && python -c "import torch; assert torch.__version__.startswith('2.6.0'), torch.__version__" \
+    && python -c "import torch; assert torch.__version__.startswith('2.7.1'), torch.__version__" \
     && python -c "import setuptools, pkg_resources; assert int(setuptools.__version__.split('.')[0]) < 82, setuptools.__version__" \
     && python -c "import perth; assert perth.PerthImplicitWatermarker is not None, 'perth: filigrane indisponible'"
 

@@ -1,4 +1,4 @@
-# torch / torchaudio 2.6.0 (cu124) sont installés AVANT ce fichier par le Dockerfile.
+# torch / torchaudio 2.7.1 (cu128, Blackwell sm_120 inclus) sont installés AVANT ce fichier par le Dockerfile.
 # chatterbox-tts est installé --no-deps (pour ne pas embarquer gradio) : ses dépendances sont listées ici.
 
 # --- Séparation instrumentale : BS-Roformer Leap Xe via bs-roformer-infer (MIT, Python >= 3.11) ---
