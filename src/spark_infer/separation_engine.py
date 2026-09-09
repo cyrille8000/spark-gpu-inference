@@ -26,10 +26,15 @@ class InstrumentalSeparator:
             model_name=MODEL_SLUG, models_dir=str(models_dir), device=device,
             backend="torch", progress=False,
         ).load()
+        from bs_roformer.backends.base import ChunkingPlan
+
         cfg = self.session._config  # ConfigDict chargé par load() ; lu, jamais modifié
         self.stem = cfg.training.target_instrument or "other"
-        self.chunk_size = int(cfg.inference.chunk_size)
-        self.num_overlap = int(cfg.inference.num_overlap)
+        # chunk_size vit sous `audio:` dans la config Leap Xe (sous `inference:` dans d'autres) :
+        # ChunkingPlan est l'unique endroit du paquet qui connaît les deux emplacements
+        plan = ChunkingPlan.from_config(cfg)
+        self.chunk_size = int(plan.chunk_size)
+        self.num_overlap = int(plan.num_overlap)
         log.info("BS-Roformer Leap Xe prêt (device=%s, stem=%s, chunk=%d, overlap=%d)",
                  self.session.device, self.stem, self.chunk_size, self.num_overlap)
 
