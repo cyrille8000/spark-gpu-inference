@@ -56,7 +56,10 @@ app = modal.App("spark-gpu-inference")
     image=image,
     gpu=GPU,
     timeout=900,
-    scaledown_window=120,
+    # 10 s (était 120) : Modal facture l'inactivité APRÈS un job. L'image la
+    # rapporte (`container_s`) jusqu'au rapport suivant seulement — la queue
+    # finale reste hors compteur, donc on la garde courte.
+    scaledown_window=10,
     secrets=[modal.Secret.from_name("modal-api-key")],
 )
 class SparkInference:

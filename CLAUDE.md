@@ -38,6 +38,9 @@ Détails du contrat : [README.md](README.md).
   chatterbox-tts est installé `--no-deps` pour ne pas embarquer gradio ; ses dépendances sont listées dans
   `requirements.txt`. `pip check` du Dockerfile bloque tout autre conflit.
 
+- **Temps conteneur rapporté, jamais estimé.** `container_s` (container_clock.py) = fenêtre depuis le rapport
+  précédent ou le démarrage du processus : c'est ce que Modal/RunPod facturent, pas `elapsed_s`. La plateforme facture
+  `container_s`. `scaledown_window` Modal = 10 s pour que la queue d'inactivité non comptée reste courte (2026-09-09).
 - **Un seul traitement, deux hébergeurs.** `spark_infer/service.py::process_job` est appelé par `handler.py` (RunPod)
   et `modal_app.py` (Modal, même image GHCR via `Image.from_registry`, secret `modal-api-key`). Ne rien dupliquer.
 

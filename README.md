@@ -76,15 +76,17 @@ Un seul tirage par job (décision du 2026-09-09) : pas de best-of-N, donc ni sco
   "model": "roformer-model-bs-roformer-leap-xe-instrumental-by-pcunwa",
   "format": "wav", "bytes": 8640044, "sha256": "…", "uploaded": true,
   "duration_s": 180.0, "sample_rate": 24000, "channels": 1, "attempts": 1,
-  "elapsed_s": 21.4, "cold_start": true,
+  "elapsed_s": 21.4, "cold_start": true, "container_s": 27.9, "container_first_job": true,
   "timings": { "download_s": 0.8, "decode_s": 0.4, "model_load_s": 6.1, "inference_s": 12.9, "encode_s": 0.3, "upload_s": 0.9 },
   "device": "cuda", "gpu_name": "NVIDIA L4", "models_loaded": ["bs_roformer_leap_xe"],
   "callback_delivered": true }
 ```
 
-`timings` est le temps mesuré par l'image, étape par étape ; `executionTime` du statut RunPod reste la référence
-de facturation (le démarrage à froid du conteneur n'est dans aucun des deux). `cold_start` dit si le modèle a dû être
-chargé pour ce job. En cas d'échec, le même rappel part avec `{ "status": "error", "error", "code" }`.
+`timings` est le temps mesuré par l'image, étape par étape. **`container_s` est ce que l'hébergeur facture** : la
+fenêtre conteneur depuis le rapport précédent (ou depuis le démarrage du processus pour le premier job) = boot + attente +
+ce job ; la somme sur les jobs d'un conteneur est sa vie entière, à la queue d'inactivité finale près (10 s sur Modal,
+idle timeout RunPod). `executionTime` RunPod et `elapsed_s` ne couvrent que le job. `cold_start` dit si le modèle a dû être
+chargé pour ce job, `container_first_job` si c'est le premier job du conteneur. En cas d'échec, le même rappel part avec `{ "status": "error", "error", "code" }`.
 
 Pour `vc` s'ajoutent `seed`, `tail_passes`, les réglages appliqués et `warnings[]`.
 Erreurs : `{ "status": "error", "error": "…", "code": "bad_input" | "internal", "job_id": "…" }`. Une `bad_input` ne doit jamais être rejouée.

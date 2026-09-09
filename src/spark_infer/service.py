@@ -10,6 +10,7 @@ import logging
 import traceback
 from typing import Callable
 
+from .container_clock import CLOCK
 from .io_utils import InputError, send_callback
 from .params import parse_callback
 from .tasks import run_task
@@ -32,6 +33,12 @@ def process_job(inp: dict, job_id: str, progress: Progress | None = None) -> dic
     except Exception as e:  # noqa: BLE001
         log.error("[%s] échec : %s\n%s", job_id, e, traceback.format_exc())
         result = {"status": "error", "error": f"{type(e).__name__}: {e}", "code": "internal", "job_id": job_id}
+
+    # Ce que l'hébergeur FACTURE : la fenêtre conteneur depuis le rapport
+    # précédent (boot + attente + ce job), succès comme échec. Voir container_clock.
+    container_s, first = CLOCK.window()
+    result["container_s"] = round(container_s, 3)
+    result["container_first_job"] = first
 
     _notify(inp, job_id, result)
     return result
