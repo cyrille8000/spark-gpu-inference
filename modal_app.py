@@ -15,7 +15,7 @@ par compte.
 
 Contrat de l'endpoint (POST JSON, `api_key` obligatoire) :
     {"action": "submit", ...même JSON que RunPod (README.md)...}  → {"status":"queued","job_id","call_id"}
-    {"action": "status", "call_id": "…"}                         → {"status":"running"|"completed"|"failed", "result"?}
+    {"action": "status", "call_id": "…"}                         → {"status":"running"|"completed"|"failed"|"unknown", "result"?}
     {"action": "cancel", "call_id": "…"}                         → {"status":"cancelled"}
 Sans `action`, `submit`. L'URL est inchangée : la classe web s'appelle toujours
 `SparkInference` et sa méthode `run` (URL `…--spark-gpu-inference-sparkinference-run.modal.run`).
@@ -131,6 +131,9 @@ class SparkInference:
                 return {"status": "completed", "result": fc.get(timeout=0)}
             except TimeoutError:
                 return {"status": "running"}
+            except modal.exception.NotFoundError as e:
+                # Modal ne connaît pas (ou plus) ce call_id : ce n'est pas un job échoué.
+                return {"status": "unknown", "error": f"{type(e).__name__}: {e}"}
             except Exception as e:  # noqa: BLE001 — la fonction a levé (process_job ne lève jamais : conteneur mort, timeout Modal)
                 return {"status": "failed", "error": f"{type(e).__name__}: {e}"}
         if action == "cancel":
