@@ -67,6 +67,44 @@ def test_plan_windows_cuts_in_silences_and_covers_everything():
         assert float(np.abs(y[coupe - 120:coupe + 120]).max()) == 0.0  # au creux : dans un silence
 
 
+def test_plan_windows_cuts_on_the_boundaries_it_is_given():
+    """Les frontières envoyées par la plateforme (jonctions de segments) sont LES coupes :
+    la dernière qui tient dans la fenêtre, jamais un creux d'énergie deviné."""
+    sr = 24000
+    y = np.ones(int(179.2 * sr), dtype=np.float32)  # aucun creux : seul `cuts` peut décider
+    seg = int(7.3 * sr)
+    cuts = list(range(seg, len(y), seg))  # une frontière tous les 7,3 s
+    bornes = plan_windows(y, sr, 60.0, cuts=cuts)
+    assert bornes[0][0] == 0 and bornes[-1][1] == len(y)
+    assert all(b[0] == a[1] for a, b in zip(bornes, bornes[1:]))
+    assert all(fin in cuts for _, fin in bornes[:-1])  # chaque coupe EST une frontière
+    assert all(fin - deb <= 60 * sr for deb, fin in bornes[:-1])  # jamais au-dessus de la fenêtre
+    assert bornes[0][1] == 8 * seg  # 58,4 s : la dernière frontière sous 60 s
+    assert 10 * sr < bornes[-1][1] - bornes[-1][0] <= 70 * sr
+
+
+def test_plan_windows_cleans_the_boundaries_it_receives():
+    sr = 24000
+    y = np.ones(150 * sr, dtype=np.float32)
+    propres = [20 * sr, 55 * sr, 100 * sr, 130 * sr]
+    sales = [55 * sr, 0, -3, 20 * sr, 20 * sr, len(y), len(y) + 5, 130 * sr, 100 * sr]  # désordre, doublons, hors bornes
+    assert plan_windows(y, sr, 60.0, cuts=sales) == plan_windows(y, sr, 60.0, cuts=propres)
+    assert plan_windows(y, sr, 60.0, cuts=propres)[0] == (0, 55 * sr)
+
+
+def test_plan_windows_falls_back_to_energy_without_a_usable_boundary():
+    """Une seule frontière à 5 s, puis un segment de plus de 60 s : la première fenêtre s'arrête
+    sur la frontière, la suivante n'en a aucune à portée et retombe sur le creux d'énergie."""
+    sr = 24000
+    y = _parole_avec_silences(sr, 179.2)
+    bornes = plan_windows(y, sr, 60.0, cuts=[5 * sr])
+    assert bornes[0] == (0, 5 * sr)
+    deb, fin = bornes[1]
+    assert 50 * sr <= fin - deb <= 70 * sr
+    assert float(np.abs(y[fin - 120:fin + 120]).max()) == 0.0  # le repli coupe dans un silence
+    assert plan_windows(y, sr, 60.0, cuts=[]) == plan_windows(y, sr, 60.0)  # sans frontière : comme avant
+
+
 def test_plan_windows_without_silence_still_bounded():
     sr = 16000
     y = np.ones(200 * sr, dtype=np.float32)  # aucun creux : la coupe tombe quand même dans la zone de recherche

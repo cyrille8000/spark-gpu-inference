@@ -69,3 +69,15 @@ def test_vc_validation():
     assert parse_vc({"source_url": URL, "ref_urls": [URL], "window_s": 45}).params.window_s == 45.0
     with pytest.raises(InputError):
         parse_vc({"source_url": URL, "ref_urls": [URL], "window_s": 5})  # sous le plancher de 10 s
+
+
+def test_vc_cuts_s():
+    """Les frontières autorisées de la source : absentes → [], sinon triées, dédoublonnées, sans 0."""
+    assert parse_vc({"source_url": URL, "ref_urls": [URL]}).cuts_s == []
+    r = parse_vc({"source_url": URL, "ref_urls": [URL], "cuts_s": [7.25, 0, 3, 3.0, 61.5]})
+    assert r.cuts_s == [3.0, 7.25, 61.5]
+    for mauvais in ("3,7", {"a": 1}, [True], ["3"], [-1.0], [float("nan")], [float("inf")]):
+        with pytest.raises(InputError):
+            parse_vc({"source_url": URL, "ref_urls": [URL], "cuts_s": mauvais})
+    with pytest.raises(InputError):
+        parse_vc({"source_url": URL, "ref_urls": [URL], "cuts_s": [1.0] * 10_001})

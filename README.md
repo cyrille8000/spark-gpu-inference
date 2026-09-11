@@ -77,6 +77,8 @@ Sur OOM CUDA : libération des modèles résidents puis un second essai.
 | `ref_len` | 10 | longueur du prompt de référence en secondes (1..30) |
 | `preproc` | `true` | passe-haut 70 Hz + sonie −23 LUFS sur la source |
 | `seed` | 1000 | graine du tirage (résultat reproductible) |
+| `window_s` | 60 | longueur max d'une fenêtre de conversion (10..600 s) — la mémoire du décodeur croît avec le carré de la durée |
+| `cuts_s` | `[]` | frontières AUTORISÉES, en secondes depuis le début de la source : les jonctions de segments que la plateforme a collés. Chaque fenêtre s'arrête sur la dernière frontière qui tient dans `window_s` ; sans frontière utilisable (ou sans `cuts_s`), coupe au creux d'énergie des 10 s précédant la cible |
 
 La sortie a la durée exacte de la source. Si le modèle produit plus court, la partie de la source restée sans
 sortie est reconvertie seule et **collée bout à bout, sans recouvrement ni fondu** (décision du 2026-09-09), jusqu'à 5 fois ;

@@ -188,7 +188,7 @@ def _run_vc(req: VcRequest, workdir: Path, job_id: str, progress: Progress, time
         cold_start = cold_start or cold
         with timer.step("inference"):
             return vc.run(source, refs, prompt, req.params, workdir,
-                          progress=lambda p, m: report(5 + int(p * 0.85), m))
+                          progress=lambda p, m: report(5 + int(p * 0.85), m), cuts_s=req.cuts_s)
 
     (wav, sr, meta), attempts = _with_oom_retry(job_id, "conversion vocale", convert, keep="chatterbox_vc")
 

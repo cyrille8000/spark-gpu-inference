@@ -20,10 +20,15 @@ Détails du contrat : [README.md](README.md).
 - **VC : queue collée, pas de fondu.** Si la sortie est plus courte que la source, le reste est reconverti et concaténé
   tel quel (décision 2026-09-09) ; ne pas réintroduire de recouvrement/crossfade sans demande.
 - **VC `steps` = 25 par défaut** (choix propriétaire 2026-09-09 ; défaut interne de Chatterbox : 10).
-- **VC : source convertie PAR FENÊTRES** (`audio_utils.plan_windows`, `window_s` = 60 s par défaut, coupe au creux
-  d'énergie des 10 s avant la cible, reliquat ≤ 10 s absorbé, fenêtres collées sans fondu, chacune ramenée à la longueur
-  exacte de sa source). La mémoire du décodeur grandit avec le carré de la durée : 176 s passaient, 179 s débordaient
-  un L4 de 22 Go (mesuré le 2026-09-11, `CUDA out of memory` puis timeout 900 s).
+- **VC : source convertie PAR FENÊTRES** (`audio_utils.plan_windows`, `window_s` = 60 s par défaut, reliquat ≤ 10 s
+  absorbé, fenêtres collées sans fondu, chacune ramenée à la longueur exacte de sa source). La mémoire du décodeur
+  grandit avec le carré de la durée : 176 s passaient, 179 s débordaient un L4 de 22 Go (mesuré le 2026-09-11,
+  `CUDA out of memory` puis timeout 900 s).
+- **VC : la coupe se pose sur les frontières envoyées par la plateforme** (`cuts_s`, secondes depuis le début de la
+  source — demande du propriétaire, 2026-09-11 : c'est le worker qui a collé les segments, c'est lui qui sait où ils
+  se touchent). Dernière frontière qui tient dans `window_s` ; le creux d'énergie des 10 s avant la cible n'est plus
+  qu'un REPLI (segment plus long que la fenêtre, ou appelant sans `cuts_s`). Ne pas réintroduire de détection de
+  silence en premier choix.
 - **Chatterbox réglé par job, jamais empilé.** `VoiceConverter` garde les méthodes d'origine (`_orig_*`) et reconstruit
   les `functools.partial` à chaque job ; sinon les réglages s'accumulent d'un job à l'autre sur le modèle résident.
 - **L'image raconte le job (2026-09-09).** `callback_url` (+ `callback_token` en Bearer) reçoit `started`, des

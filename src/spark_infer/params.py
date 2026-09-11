@@ -1,12 +1,15 @@
 """Validation des entrées de job (pure : ni torch, ni réseau — testable partout)."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from .io_utils import InputError, check_url
 
 TASKS = ("instrumental", "vc")
 MAX_REFS = 8
+# Frontières autorisées d'une source vc : un chunk de 3 min en compte quelques dizaines.
+MAX_CUTS = 10_000
 
 # TOUT RÉSULTAT EST UN WAV MONO 24 kHz 16 bits (décision propriétaire, 2026-09-09) : ce n'est pas un paramètre.
 OUTPUT_FORMAT = "wav"
@@ -53,6 +56,29 @@ def _float(inp: dict, key: str, lo: float, hi: float, default: float | None) -> 
     if not lo <= v <= hi:
         raise InputError(f"{key} doit être entre {lo} et {hi}")
     return v
+
+
+def _cuts(inp: dict) -> list[float]:
+    """`cuts_s` : les frontières AUTORISÉES de la source (secondes depuis son début) — là où
+    la plateforme a collé deux segments. Liste de nombres finis ≥ 0 ; rendue triée, dédoublonnée,
+    sans le 0 (le début n'est pas une coupe). Absente : `[]`, l'image choisit seule ses coupes."""
+    v = inp.get("cuts_s")
+    if v is None:
+        return []
+    if not isinstance(v, list):
+        raise InputError("cuts_s doit être une liste de secondes")
+    if len(v) > MAX_CUTS:
+        raise InputError(f"cuts_s : {MAX_CUTS} frontières maximum")
+    out: set[float] = set()
+    for i, t in enumerate(v):
+        if isinstance(t, bool) or not isinstance(t, (int, float)):
+            raise InputError(f"cuts_s[{i}] doit être un nombre")
+        t = float(t)
+        if not math.isfinite(t) or t < 0:
+            raise InputError(f"cuts_s[{i}] doit être un nombre fini positif")
+        if t > 0:
+            out.add(t)
+    return sorted(out)
 
 
 def _output_url(inp: dict) -> str | None:
@@ -118,6 +144,7 @@ class VcRequest:
     prompt_url: str | None
     output_url: str | None
     params: VcParams = field(default_factory=VcParams)
+    cuts_s: list[float] = field(default_factory=list)  # frontières autorisées (s), cf. _cuts
 
 
 def parse_instrumental(inp: dict) -> InstrumentalRequest:
@@ -152,6 +179,7 @@ def parse_vc(inp: dict) -> VcRequest:
         prompt_url=check_url(prompt, "prompt_url") if prompt else None,
         output_url=_output_url(inp),
         params=params,
+        cuts_s=_cuts(inp),
     )
 
 

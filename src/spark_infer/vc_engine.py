@@ -88,14 +88,16 @@ class VoiceConverter:
         return fit_length(out, int(round(src_d * self.sr))), k
 
     def _convert_full(self, y_src: np.ndarray, sr_src: int, seed: int, p: VcParams, workdir: Path,
-                      report: Callable[[int, str], None] | None = None) -> tuple[np.ndarray, int, int]:
+                      report: Callable[[int, str], None] | None = None,
+                      cuts: list[int] | None = None) -> tuple[np.ndarray, int, int]:
         """La source PAR FENÊTRES (audio_utils.plan_windows) : la mémoire du décodeur
         grandit avec le carré de la durée — 179 s = OOM sur un L4 de 22 Go, mesuré le
         2026-09-11 ; 60 s en demandent neuf fois moins. Même timbre pour toutes (la
-        référence est posée une fois), fenêtres collées bout à bout, sans fondu, aux
-        creux d'énergie choisis par plan_windows. Rend (wav, queues, fenêtres)."""
+        référence est posée une fois), fenêtres collées bout à bout, sans fondu, coupées
+        sur les frontières de segments envoyées par la plateforme (`cuts`, en
+        échantillons) — au creux d'énergie seulement à défaut. Rend (wav, queues, fenêtres)."""
         torch.manual_seed(seed)
-        bornes = plan_windows(y_src, sr_src, p.window_s)
+        bornes = plan_windows(y_src, sr_src, p.window_s, cuts=cuts)
         outs: list[np.ndarray] = []
         tails = 0
         for i, (a, b) in enumerate(bornes):
@@ -109,7 +111,8 @@ class VoiceConverter:
 
     # ---------------- entrée principale ----------------
     def run(self, source_path: Path, ref_paths: list[Path], prompt_path: Path | None, p: VcParams,
-            workdir: Path, progress: Callable[[int, str], None] | None = None) -> tuple[np.ndarray, int, dict]:
+            workdir: Path, progress: Callable[[int, str], None] | None = None,
+            cuts_s: list[float] | None = None) -> tuple[np.ndarray, int, dict]:
         report = progress or (lambda _pct, _msg: None)
         warnings = self._configure(p)
 
@@ -117,17 +120,20 @@ class VoiceConverter:
         if p.preproc:
             y_src = preprocess_source(y_src, sr_src)
         src_d = len(y_src) / sr_src
+        # Les frontières autorisées, en échantillons de LA source telle que lue (sr natif, longueur inchangée).
+        cuts = [int(round(t * sr_src)) for t in (cuts_s or [])]
 
         self._set_reference([str(r) for r in ref_paths], str(prompt_path) if prompt_path else None)
         report(10, "référence prête")
 
-        wav, tails, fenetres = self._convert_full(y_src, sr_src, p.seed, p, workdir, report)
-        log.info("conversion seed=%d fenêtres=%d queues=%d durée=%.2fs", p.seed, fenetres, tails, src_d)
+        wav, tails, fenetres = self._convert_full(y_src, sr_src, p.seed, p, workdir, report, cuts)
+        log.info("conversion seed=%d fenêtres=%d frontières=%d queues=%d durée=%.2fs",
+                 p.seed, fenetres, len(cuts), tails, src_d)
         report(90, "conversion terminée")
 
         meta = {
             "source_duration_s": round(src_d, 3),
-            "seed": p.seed, "tail_passes": tails, "windows": fenetres, "window_s": p.window_s,
+            "seed": p.seed, "tail_passes": tails, "windows": fenetres, "window_s": p.window_s, "cuts": len(cuts),
             "steps": p.steps, "temp": p.temp, "cfg": p.cfg, "ref_len": p.ref_len,
             "preproc": p.preproc, "refs": len(ref_paths), "prompt": prompt_path is not None,
             "warnings": warnings,
