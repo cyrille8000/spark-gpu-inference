@@ -25,6 +25,11 @@ def loaded() -> list[str]:
     return sorted(_models)
 
 
+def others_loaded(keep: str | None) -> list[str]:
+    """Les modèles résidents AUTRES que `keep` — ceux qu'une libération rendrait."""
+    return [m for m in loaded() if m != keep]
+
+
 def release(name: str | None = None) -> None:
     """Libère un modèle (ou tous) et vide le cache CUDA."""
     with _lock:

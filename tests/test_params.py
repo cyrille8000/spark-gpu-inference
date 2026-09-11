@@ -50,6 +50,7 @@ def test_vc_defaults_and_ref_url_alias():
     assert r.ref_urls == [URL] and r.prompt_url is None
     p = r.params
     assert (p.steps, p.temp, p.cfg, p.ref_len, p.preproc, p.seed) == (25, 0.8, None, 10.0, True, 1000)
+    assert p.window_s == 60.0  # fenêtres de conversion (2026-09-11)
 
 
 def test_vc_validation():
@@ -65,3 +66,6 @@ def test_vc_validation():
                   "steps": 30, "temp": 0.6, "cfg": 0.7, "ref_len": 8, "preproc": False})
     assert len(r.ref_urls) == 2 and r.prompt_url == URL
     assert r.params.steps == 30 and r.params.cfg == 0.7 and r.params.preproc is False
+    assert parse_vc({"source_url": URL, "ref_urls": [URL], "window_s": 45}).params.window_s == 45.0
+    with pytest.raises(InputError):
+        parse_vc({"source_url": URL, "ref_urls": [URL], "window_s": 5})  # sous le plancher de 10 s

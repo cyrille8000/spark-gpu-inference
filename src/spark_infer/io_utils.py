@@ -142,7 +142,11 @@ def encode_output(wav_path: Path, out_path: Path, fmt: str, mono: bool, sr: int 
     if fmt == "mp3":
         args += ["-codec:a", "libmp3lame", "-q:a", str(mp3_quality), str(out_path)]
     elif fmt == "wav":
-        args += ["-acodec", "pcm_s16le", str(out_path)]
+        # -bitexact : pas de bloc LIST/INFO « Lavf… » entre `fmt ` et `data` —
+        # en-tête canonique de 44 octets. La plateforme lisait ce WAV à offset
+        # fixe et l'a rejeté le 2026-09-11 (« data_chunk ») ; elle lit désormais
+        # le conteneur, mais un WAV canonique reste le contrat le plus simple.
+        args += ["-bitexact", "-acodec", "pcm_s16le", str(out_path)]
     else:
         raise InputError(f"output_format inconnu : {fmt}")
     run_ffmpeg(args)

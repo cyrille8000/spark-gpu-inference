@@ -102,6 +102,7 @@ class VcParams:
     seed: int = 1000           # graine du tirage (résultat reproductible)
     max_tail_passes: int = 5   # complétions de queue max
     tail_tolerance_s: float = 0.15
+    window_s: float = 60.0     # fenêtres de conversion (s) — mémoire ∝ durée², cf. audio_utils.plan_windows (2026-09-11)
 
 
 @dataclass
@@ -143,6 +144,7 @@ def parse_vc(inp: dict) -> VcRequest:
         ref_len=_float(inp, "ref_len", 1.0, 30.0, 10.0),  # type: ignore[arg-type]
         preproc=_bool(inp, "preproc", True),
         seed=_int(inp, "seed", 0, 2**31 - 1, 1000),  # type: ignore[arg-type]
+        window_s=_float(inp, "window_s", 10.0, 600.0, 60.0),  # type: ignore[arg-type]
     )
     return VcRequest(
         source_url=check_url(inp.get("source_url"), "source_url"),

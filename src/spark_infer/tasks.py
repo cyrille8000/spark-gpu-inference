@@ -77,8 +77,12 @@ def run_task(inp: dict, job_id: str, progress: Progress) -> dict:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
-def _with_oom_retry(job_id: str, what: str, fn: Callable[[], object]) -> tuple[object, int]:
-    """Exécute `fn` ; sur OOM CUDA, libère tous les modèles résidents et rejoue une fois."""
+def _with_oom_retry(job_id: str, what: str, fn: Callable[[], object], keep: str | None = None) -> tuple[object, int]:
+    """Exécute `fn` ; sur OOM CUDA, libère les modèles résidents et rejoue UNE fois —
+    seulement si un AUTRE modèle que `keep` (celui du job) occupait la carte. Le même
+    job, sur la même carte, avec le même modèle seul, redéborde à l'identique :
+    rejouer ne fait que payer deux fois (mesuré le 2026-09-11 : 15 min d'L4 pour rien,
+    l'image ayant relancé la conversion après le premier OOM jusqu'au timeout Modal)."""
     attempts = 0
     while True:
         attempts += 1
@@ -87,7 +91,11 @@ def _with_oom_retry(job_id: str, what: str, fn: Callable[[], object]) -> tuple[o
         except Exception as e:  # noqa: BLE001
             if not is_cuda_oom(e) or attempts >= 2:
                 raise
-            log.warning("[%s] OOM en %s → libération des modèles et 2e essai", job_id, what)
+            autres = registry.others_loaded(keep)
+            if not autres:
+                log.warning("[%s] OOM en %s, aucun autre modèle résident → pas de 2e essai", job_id, what)
+                raise
+            log.warning("[%s] OOM en %s → libération de %s et 2e essai", job_id, what, autres)
             registry.release()
 
 
@@ -130,7 +138,7 @@ def _run_instrumental(req: InstrumentalRequest, workdir: Path, job_id: str, prog
         with timer.step("inference"):
             return sep.separate(mix_wav, workdir)
 
-    inst_wav, attempts = _with_oom_retry(job_id, "séparation", separate)
+    inst_wav, attempts = _with_oom_retry(job_id, "séparation", separate, keep="bs_roformer_leap_xe")
     report(90, "encodage")
 
     with timer.step("encode"):
@@ -182,7 +190,7 @@ def _run_vc(req: VcRequest, workdir: Path, job_id: str, progress: Progress, time
             return vc.run(source, refs, prompt, req.params, workdir,
                           progress=lambda p, m: report(5 + int(p * 0.85), m))
 
-    (wav, sr, meta), attempts = _with_oom_retry(job_id, "conversion vocale", convert)
+    (wav, sr, meta), attempts = _with_oom_retry(job_id, "conversion vocale", convert, keep="chatterbox_vc")
 
     with timer.step("encode"):
         out_wav = workdir / "converted_f32.wav"

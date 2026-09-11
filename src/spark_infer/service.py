@@ -76,6 +76,10 @@ def process_job(inp: dict, job_id: str, progress: Progress | None = None) -> dic
     container_s, first = CLOCK.window()
     result.update({
         "task": result.get("task") or task,
+        # Le GPU, succès COMME échec : sans lui, la plateforme facturait un échec
+        # au tarif « GPU inconnu » sous l'étiquette du compte (2026-09-11).
+        "gpu_name": result.get("gpu_name") or registry.gpu_name(),
+        "device": result.get("device") or registry.device(),
         "container_s": round(container_s, 3), "container_first_job": first,
         "elapsed_s": result.get("elapsed_s", round(time.monotonic() - t0, 3)),
         "started_at": started_at, "finished_at": now_iso(),

@@ -20,6 +20,10 @@ Détails du contrat : [README.md](README.md).
 - **VC : queue collée, pas de fondu.** Si la sortie est plus courte que la source, le reste est reconverti et concaténé
   tel quel (décision 2026-09-09) ; ne pas réintroduire de recouvrement/crossfade sans demande.
 - **VC `steps` = 25 par défaut** (choix propriétaire 2026-09-09 ; défaut interne de Chatterbox : 10).
+- **VC : source convertie PAR FENÊTRES** (`audio_utils.plan_windows`, `window_s` = 60 s par défaut, coupe au creux
+  d'énergie des 10 s avant la cible, reliquat ≤ 10 s absorbé, fenêtres collées sans fondu, chacune ramenée à la longueur
+  exacte de sa source). La mémoire du décodeur grandit avec le carré de la durée : 176 s passaient, 179 s débordaient
+  un L4 de 22 Go (mesuré le 2026-09-11, `CUDA out of memory` puis timeout 900 s).
 - **Chatterbox réglé par job, jamais empilé.** `VoiceConverter` garde les méthodes d'origine (`_orig_*`) et reconstruit
   les `functools.partial` à chaque job ; sinon les réglages s'accumulent d'un job à l'autre sur le modèle résident.
 - **L'image raconte le job (2026-09-09).** `callback_url` (+ `callback_token` en Bearer) reçoit `started`, des
@@ -30,11 +34,14 @@ Détails du contrat : [README.md](README.md).
   (GPU) + `status` + `cancel` ; l'URL de l'endpoint est inchangée. Coût = temps seulement (`container_s`, `timings`,
   `executionTime` RunPod), pas d'estimation en dollars.
 - **Tout résultat = WAV mono 24 kHz 16 bits**, sans option (`OUTPUT_FORMAT` / `OUTPUT_SR` / `OUTPUT_MONO` dans params.py) — décision 2026-09-09.
+  Écrit `-bitexact` : en-tête canonique de 44 octets, pas de bloc LIST/INFO d'ffmpeg avant `data` (2026-09-11).
 - **Conversions de canaux à gain 1, matrices explicites.** Jamais `-ac` seul : ffmpeg atténue mono→stéréo de 0,707
   et amplifie stéréo→mono de 1,414 (un WAV mono plateforme ressortait 3 dB trop bas). `pan=stereo|c0=c0|c1=c0` et
   `pan=mono|c0=0.5*c0+0.5*c1` dans `io_utils._channel_filter`, prouvés par `tests/test_ffmpeg_levels.py`.
 - **Erreurs typées.** `InputError` → `code: bad_input` (ne jamais rejouer) ; le reste → `code: internal`. Un OOM CUDA
-  libère les modèles (`registry.release()`) et rejoue une fois.
+  ne rejoue UNE fois qu'après avoir libéré un AUTRE modèle résident (`registry.others_loaded`) ; le modèle du job seul
+  en mémoire = pas de 2e essai (2026-09-11 : un rejeu a coûté 15 min d'L4 pour rien). Tout résultat, échec compris,
+  porte `gpu_name` et `device` — la plateforme facture au vrai GPU.
 - **Pins.** setuptools < 82 (resemble-perth importe `pkg_resources`, supprimé en 82 ; sinon le filigrane Chatterbox
   vaut None), torch/torchaudio 2.7.1 **cu128** (le pool 24 GB RunPod sert des Blackwell sm_120 que cu124 ne sait pas exécuter ;
   chatterbox-tts 0.1.7 épingle 2.6.0 mais est installé --no-deps), numpy < 2, bs-roformer-infer épinglé sur

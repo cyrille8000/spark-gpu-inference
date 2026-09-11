@@ -5,6 +5,9 @@ moyenné sur plusieurs clips de référence, prompt phonétique optionnel, pas/t
 du décodeur CFM, complétion de la queue. Décisions du propriétaire (2026-09-09) : une seule
 itération (pas de best-of-N, donc pas de scorer ECAPA ni WER), pas de resemble-enhance, et la
 queue manquante est reconvertie puis COLLÉE bout à bout, sans recouvrement ni fondu.
+Depuis le 2026-09-11 la source est convertie PAR FENÊTRES (audio_utils.plan_windows,
+60 s par défaut, coupées aux creux d'énergie) collées de même : la mémoire du décodeur
+grandit avec le carré de la durée, 179 s débordaient un L4 de 22 Go.
 """
 from __future__ import annotations
 
@@ -18,7 +21,7 @@ import numpy as np
 import soundfile as sf
 import torch
 
-from .audio_utils import fit_length, preprocess_source
+from .audio_utils import fit_length, plan_windows, preprocess_source
 from .params import VcParams
 
 log = logging.getLogger("spark.vc")
@@ -65,20 +68,44 @@ class VoiceConverter:
         with torch.inference_mode():
             return self.model.generate(audio=path).squeeze(0).cpu().numpy()
 
-    def _convert_full(self, src_path: Path, y_src: np.ndarray, sr_src: int, seed: int,
-                      p: VcParams, workdir: Path) -> tuple[np.ndarray, int]:
-        torch.manual_seed(seed)
-        src_d = len(y_src) / sr_src
-        out = self._convert(str(src_path))
+    def _convert_piece(self, piece: np.ndarray, sr_src: int, nom: str, p: VcParams,
+                       workdir: Path) -> tuple[np.ndarray, int]:
+        """Une fenêtre : conversion, complétion de la queue (collée telle quelle), puis
+        longueur EXACTE de la fenêtre source — les fenêtres concaténées redonnent la
+        durée de la source, que la plateforme redécoupe à offsets fixes."""
+        piece_path = workdir / f"{nom}.wav"
+        sf.write(piece_path, piece, sr_src)
+        src_d = len(piece) / sr_src
+        out = self._convert(str(piece_path))
         k = 0
         while src_d - len(out) / self.sr > p.tail_tolerance_s and k < p.max_tail_passes:
-            # la partie de la source qui n'a pas encore de sortie, reconvertie seule et collée telle quelle
+            # la partie de la fenêtre qui n'a pas encore de sortie, reconvertie seule et collée telle quelle
             start = len(out) / self.sr
-            tail_path = workdir / f"tail_{seed}_{k}.wav"
-            sf.write(tail_path, y_src[int(start * sr_src):], sr_src)
+            tail_path = workdir / f"{nom}_tail_{k}.wav"
+            sf.write(tail_path, piece[int(start * sr_src):], sr_src)
             out = np.concatenate([out, self._convert(str(tail_path))])
             k += 1
         return fit_length(out, int(round(src_d * self.sr))), k
+
+    def _convert_full(self, y_src: np.ndarray, sr_src: int, seed: int, p: VcParams, workdir: Path,
+                      report: Callable[[int, str], None] | None = None) -> tuple[np.ndarray, int, int]:
+        """La source PAR FENÊTRES (audio_utils.plan_windows) : la mémoire du décodeur
+        grandit avec le carré de la durée — 179 s = OOM sur un L4 de 22 Go, mesuré le
+        2026-09-11 ; 60 s en demandent neuf fois moins. Même timbre pour toutes (la
+        référence est posée une fois), fenêtres collées bout à bout, sans fondu, aux
+        creux d'énergie choisis par plan_windows. Rend (wav, queues, fenêtres)."""
+        torch.manual_seed(seed)
+        bornes = plan_windows(y_src, sr_src, p.window_s)
+        outs: list[np.ndarray] = []
+        tails = 0
+        for i, (a, b) in enumerate(bornes):
+            out, k = self._convert_piece(y_src[a:b], sr_src, f"win_{seed}_{i}", p, workdir)
+            outs.append(out)
+            tails += k
+            if report:
+                report(10 + int(80 * (i + 1) / len(bornes)), f"fenêtre {i + 1}/{len(bornes)}")
+        wav = np.concatenate(outs) if outs else np.zeros(0, dtype=np.float32)
+        return fit_length(wav, int(round(len(y_src) / sr_src * self.sr))), tails, len(bornes)
 
     # ---------------- entrée principale ----------------
     def run(self, source_path: Path, ref_paths: list[Path], prompt_path: Path | None, p: VcParams,
@@ -89,20 +116,18 @@ class VoiceConverter:
         y_src, sr_src = librosa.load(str(source_path), sr=None, mono=True)
         if p.preproc:
             y_src = preprocess_source(y_src, sr_src)
-        src_wav = workdir / "src.wav"
-        sf.write(src_wav, y_src, sr_src)
         src_d = len(y_src) / sr_src
 
         self._set_reference([str(r) for r in ref_paths], str(prompt_path) if prompt_path else None)
         report(10, "référence prête")
 
-        wav, tails = self._convert_full(src_wav, y_src, sr_src, p.seed, p, workdir)
-        log.info("conversion seed=%d queues=%d durée=%.2fs", p.seed, tails, src_d)
+        wav, tails, fenetres = self._convert_full(y_src, sr_src, p.seed, p, workdir, report)
+        log.info("conversion seed=%d fenêtres=%d queues=%d durée=%.2fs", p.seed, fenetres, tails, src_d)
         report(90, "conversion terminée")
 
         meta = {
             "source_duration_s": round(src_d, 3),
-            "seed": p.seed, "tail_passes": tails,
+            "seed": p.seed, "tail_passes": tails, "windows": fenetres, "window_s": p.window_s,
             "steps": p.steps, "temp": p.temp, "cfg": p.cfg, "ref_len": p.ref_len,
             "preproc": p.preproc, "refs": len(ref_paths), "prompt": prompt_path is not None,
             "warnings": warnings,
