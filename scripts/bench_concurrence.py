@@ -105,10 +105,9 @@ def main() -> int:
     # suivantes non, ce qui gonfle artificiellement le gain du parallélisme (constaté
     # le 2026-09-12 : ×2,44 annoncé pour ×1,2 réel).
     if not a.sans_chauffe:
-        t0 = time.monotonic()
         r = un_job(a.url, a.token, charge, a.timeout)
-        print(f"échauffement (jeté) : {r['s']} s, dont {r.get('model_load_s')} s de chargement du modèle
-")
+        print(f"échauffement (jeté) : {r['s']} s, dont {r.get('model_load_s')} s de chargement du modèle")
+        print()
 
     lignes = []
     for n in [int(x) for x in a.vagues.split(",") if x.strip()]:
