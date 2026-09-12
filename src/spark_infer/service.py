@@ -11,7 +11,7 @@ import os
 import threading
 import time
 import traceback
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Callable
 
 from . import registry
@@ -35,13 +35,39 @@ MAX_SOUS_JOBS = 256
 # deux garde une marge confortable et rend la capacité lisible — quatre cartes
 # donnent huit, trois donnent six.
 JOBS_PAR_CARTE = 2
-# Temps de travail que s'accorde le worker si le lancement n'en impose pas. Reste
-# très en dessous des coupures des hébergeurs (600 s chez RunPod, 900 s chez Modal) :
-# le worker doit rendre la main de lui-même, jamais se faire couper en pleine vague.
-BUDGET_DEFAUT_S = 420.0
+# GARDE-FOU, pas règle d'arrêt. Ce qui arrête le worker, c'est la FILE VIDE : tant
+# qu'il y a du travail il continue, sinon il sort tout de suite (décision du
+# propriétaire, 2026-09-12, les coupures des hébergeurs étant portées à 5 heures).
+#
+# Le budget ne sert plus qu'au cas où rien ne s'arrête : un blocage dans le code, une
+# vague qui ne finit jamais. Sans lui, la facture serait de cinq heures fois le nombre
+# de cartes. 4 h 50 laisse dix minutes sous le plafond.
+#
+# La règle « assez de temps pour une vague de plus ? » reste vraie dans les deux cas :
+# un worker coupé en pleine vague perd TOUT son travail, donc il rend la main avant.
+BUDGET_DEFAUT_S = 17400.0
 # En dessous de ça, inutile de redemander : on n'aurait pas le temps de finir.
 PLANCHER_S = 45.0
-MAX_VAGUES = 50
+
+# ── BATTEMENT DU WORKER ───────────────────────────────────────────────────────
+# Le battement par SOUS-JOB existe déjà (`webhooks.Heartbeat`, vers son
+# `callback_url`). Il ne dit rien du worker lui-même : ni entre deux jobs, ni
+# quand il n'en tient aucun. Or avec des coupures d'hébergeur portées à cinq
+# heures, ce n'est plus le timeout qui arrête un worker — c'est nous.
+#
+# Ce battement-ci va vers l'URL de PRISE, donc vers notre serveur, donc SA RÉPONSE
+# PEUT PORTER UN ORDRE. C'est ce qui donne l'arrêt à distance sur les trois
+# plateformes avec le même code, sans toucher à l'API de Modal, de RunPod ni de
+# Vast : `{"arret": "doux"}` — cesse de reprendre, laisse finir, sors ;
+# `{"arret": "net"}` — sors tout de suite, on abandonne ce qui tourne.
+BATTEMENT_S = 30.0
+# Un worker qui n'atteint plus le serveur ne peut être arrêté que DE L'INTÉRIEUR :
+# aucun ordre ne lui parviendra, par définition. Il cesse donc de reprendre après
+# ce silence-là...
+SILENCE_DOUX_S = 300.0
+# ...et se tue passé celui-ci, même en plein job. On perd le calcul en cours ;
+# l'alternative est de payer les cartes jusqu'au bout des cinq heures.
+SILENCE_NET_S = 900.0
 
 
 def avancement(lot_id: str, faits: int, total: int, places: int, t0: float) -> dict:
@@ -184,23 +210,112 @@ def _demander(url: str, corps: dict, essais: int = 2) -> dict:
     return {"erreur": dernier}
 
 
+class Battement:
+    """Bat vers le serveur pendant TOUTE la vie du worker, et écoute sa réponse.
+
+    Deux rôles pour une seule requête. Le serveur apprend que le worker vit, donc il
+    peut remettre en file les jobs d'un worker qui s'est tu. Et il peut répondre un
+    ordre d'arrêt, ce qui donne l'extinction à distance sans aucune API d'hébergeur.
+
+    Le silence est traité des deux côtés : si c'est NOUS qui n'atteignons plus le
+    serveur, aucun ordre ne nous parviendra jamais — le worker doit donc décider seul
+    de s'arrêter, sinon il calcule dans le vide en facturant ses cartes.
+    """
+
+    def __init__(self, url: str, identite: dict, etat: Callable[[], dict],
+                 periode_s: float = BATTEMENT_S) -> None:
+        self.url = url
+        self.identite = identite
+        self.etat = etat
+        self.periode = max(5.0, float(periode_s))
+        self.arret: str | None = None      # None | "doux" | "net" | "silence"
+        self.battus = 0
+        self._contact = time.monotonic()
+        self._stop = threading.Event()
+        self._fil: threading.Thread | None = None
+
+    def contact(self) -> None:
+        """Toute conversation réussie avec le serveur compte, pas seulement un battement."""
+        self._contact = time.monotonic()
+
+    def start(self) -> None:
+        self._fil = threading.Thread(target=self._run, name="spark-battement", daemon=True)
+        self._fil.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._fil is not None:
+            self._fil.join(timeout=5)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.periode):
+            # ON N'AJOUTE RIEN TANT QUE LES PRISES PARLENT. Un worker occupé demande
+            # déjà du travail à chaque fin de sous-job — huit places de 80 s, c'est une
+            # requête toutes les dix secondes, et chacune prouve qu'il est vivant et
+            # peut rapporter un ordre d'arrêt. Le battement ne sert donc qu'au worker
+            # SILENCIEUX : celui dont toutes les places sont prises par des jobs longs,
+            # ou qui n'a plus rien à demander.
+            if time.monotonic() - self._contact < self.periode:
+                continue
+            # Un seul essai : un battement raté n'a pas à retarder le suivant.
+            rep = _demander(self.url, {**self.identite, "battement": True, **self.etat()},
+                            essais=1)
+            if rep.get("erreur"):
+                self._silence()
+                continue
+            self._contact = time.monotonic()
+            self.battus += 1
+            self.lire_ordre(rep)
+
+    def lire_ordre(self, rep: dict) -> None:
+        """Obéit à `arret` dans N'IMPORTE QUELLE réponse du serveur — prise comme
+        battement. « net » coupe tout de suite et perd ce qui tourne ; « doux » laisse
+        finir. Le serveur choisit selon l'urgence."""
+        ordre = str(rep.get("arret") or "").strip().lower()
+        if ordre == "net":
+            log.warning("arrêt NET demandé par le serveur — on abandonne ce qui tourne")
+            os._exit(0)
+        if ordre or rep.get("stop"):
+            if self.arret is None:
+                log.info("arrêt demandé par le serveur : on cesse de reprendre")
+            self.arret = "doux"
+
+    def _silence(self) -> None:
+        mut = time.monotonic() - self._contact
+        if mut > SILENCE_NET_S:
+            log.error("serveur injoignable depuis %.0f s — le worker se tue pour ne plus "
+                      "facturer ses cartes dans le vide", mut)
+            os._exit(3)
+        if mut > SILENCE_DOUX_S and self.arret is None:
+            log.warning("serveur injoignable depuis %.0f s — on cesse de reprendre", mut)
+            self.arret = "silence"
+
+
 def process_pull(inp: dict, job_id: str, progress: Progress | None = None) -> dict:
-    """Le worker VA CHERCHER son travail au lieu qu'on le lui pousse.
+    """Le worker VA CHERCHER son travail, et reste PLEIN tant qu'il y en a.
 
     Le problème que ça résout : on demande quatre cartes à RunPod et on en reçoit
     parfois trois — mesuré le 2026-09-12, leur propre contrôle de démarrage le dit.
     Le serveur ne peut donc pas savoir combien de jobs envoyer. Le worker, lui, sait :
-    il compte ses cartes au démarrage et prend `JOBS_PAR_CARTE` fois ce nombre.
+    il compte ses cartes et tient `JOBS_PAR_CARTE` fois ce nombre en permanence.
+
+    TOUJOURS PLEIN, et c'est le point. On ne travaille pas par vagues qu'on attendrait
+    en entier : dès qu'un sous-job rend sa place, elle est reprise. Sinon les places
+    libérées par les jobs rapides attendent le plus lent en étant facturées — mesuré
+    le 2026-09-12 sur RunPod, quatre places inoccupées pendant 66 s sur une vague de
+    143 s, soit un quart du temps payé pour rien.
 
     Le même mécanisme vaut pour Modal, RunPod et Vast.ai. Rien à régler chez
-    l'hébergeur : la seule chose passée au lancement est `claim_url`, l'URL signée où
-    aller demander du travail.
+    l'hébergeur : la seule chose passée au lancement est `claim_url`, l'URL SIGNÉE où
+    aller demander du travail — elle porte son autorisation, le worker n'a aucun
+    secret à connaître.
 
-    La boucle demande, exécute la vague, et renvoie ses résultats AVEC la demande
-    suivante. Elle s'arrête dès que le serveur ne donne plus rien — on ne sonde JAMAIS
-    en attendant du travail, parce qu'un worker qui attend est facturé à la
-    milliseconde, cartes comprises. Elle s'arrête aussi quand le budget ne permet plus
-    une vague de plus : un worker coupé en pleine vague perd tout son travail.
+    Deux sorties, jamais une attente. Le serveur ne donne plus rien : on laisse finir
+    ce qui tourne et on sort — un worker qui attend du travail est facturé à la
+    milliseconde, cartes comprises, alors qu'un redémarrage sur une machine qui a
+    l'image coûte une vingtaine de secondes. Ou le budget ne permet plus un job de
+    plus : on cesse de reprendre, on laisse finir, on sort. Un worker coupé en plein
+    travail perd tout ce qu'il tenait.
     """
     try:
         url = check_url(inp.get("claim_url"), "claim_url")
@@ -209,63 +324,107 @@ def process_pull(inp: dict, job_id: str, progress: Progress | None = None) -> di
 
     cartes = registry.devices()
     par_carte = max(1, int(inp.get("jobs_par_carte") or JOBS_PAR_CARTE))
-    capacite = par_carte * len(cartes)
+    places = par_carte * len(cartes)
     budget = max(PLANCHER_S, float(inp.get("budget_s") or BUDGET_DEFAUT_S))
     debut = time.monotonic()
     identite = {
         "worker": job_id, "provider": os.environ.get("SPARK_PROVIDER", ""),
-        "gpu_name": registry.gpu_name(), "cartes": cartes, "capacite": capacite,
+        "gpu_name": registry.gpu_name(), "cartes": cartes, "places": places,
     }
-    log.info("[%s] PRISE : %d carte(s) x %d = %d place(s), budget %.0f s",
-             job_id, len(cartes), par_carte, capacite, budget)
+    dire = progress or (lambda _p: None)
+    log.info("[%s] PRISE : %d carte(s) x %d = %d place(s) tenues pleines, budget %.0f s",
+             job_id, len(cartes), par_carte, places, budget)
 
-    vagues: list[dict] = []
-    a_renvoyer: list[dict] = []
-    derniere_duree = 0.0
+    en_vol: dict = {}          # Future -> instant de départ
+    a_rendre: list[dict] = []  # résultats à joindre à la prochaine demande
+    durees: list[float] = []
+    faits = reussis = lances = 0
+    on_reprend = True
     raison = "file vide"
-    for n in range(1, MAX_VAGUES + 1):
-        restant = budget - (time.monotonic() - debut)
-        # Assez de temps pour une vague de plus ? On se fie à la précédente, majorée.
-        if restant < max(PLANCHER_S, derniere_duree * 1.25):
-            raison = f"budget épuisé ({restant:.0f} s restantes)"
-            break
-        rep = _demander(url, {**identite, "vague": n, "restant_s": round(restant, 1),
-                              "resultats": a_renvoyer})
-        a_renvoyer = []
-        if rep.get("erreur"):
-            raison = f"serveur injoignable : {rep['erreur']}"
-            break
-        jobs = rep.get("jobs") or []
-        if not jobs:
-            raison = "file vide"
-            break
-        t = time.monotonic()
-        lot = process_lot({"jobs": jobs}, f"{job_id}-v{n:02d}", progress)
-        derniere_duree = time.monotonic() - t
-        a_renvoyer = [_resume(r) for r in (lot.get("resultats") or [])]
-        vagues.append({"vague": n, "demandes": len(jobs), "reussis": lot.get("reussis", 0),
-                       "echecs": lot.get("echecs", 0), "s": round(derniere_duree, 1)})
-        log.info("[%s] vague %d : %d/%d en %.1f s", job_id, n, lot.get("reussis", 0),
-                 len(jobs), derniere_duree)
-        if lot.get("status") != "completed":
-            raison = f"lot refusé : {lot.get('error')}"
-            break
 
-    # Les résultats de la DERNIÈRE vague n'ont pas encore été renvoyés : sans ce
-    # dernier envoi, le serveur garderait leurs réservations jusqu'à expiration.
-    if a_renvoyer:
-        _demander(url, {**identite, "vague": 0, "restant_s": 0, "fin": True,
-                        "resultats": a_renvoyer})
+    def etat() -> dict:
+        ecoule = max(0.001, time.monotonic() - debut)
+        return {"prise": job_id, "places": places, "en_vol": len(en_vol), "faits": faits,
+                "reussis": reussis, "ecoule_s": round(ecoule, 1),
+                "debit_par_min": round(faits / (ecoule / 60), 2),
+                "message": f"prise : {faits} fini(s), {len(en_vol)} en cours sur {places}"}
 
-    total = sum(v["demandes"] for v in vagues)
-    reussis = sum(v["reussis"] for v in vagues)
-    log.info("[%s] PRISE terminée : %d vague(s), %d/%d sous-job(s), %.0f s — %s",
-             job_id, len(vagues), reussis, total, time.monotonic() - debut, raison)
+    bat = Battement(url, identite, etat, float(inp.get("battement_s") or BATTEMENT_S))
+    bat.start()
+    with places_du_lot(places), ThreadPoolExecutor(max_workers=places) as ex:
+        while True:
+            if bat.arret and on_reprend:
+                on_reprend = False
+                raison = ("arrêt demandé par le serveur" if bat.arret == "doux"
+                          else "serveur muet trop longtemps")
+            libres = places - len(en_vol)
+            restant = budget - (time.monotonic() - debut)
+            # Assez de temps pour un job de plus ? On se fie au plus long déjà vu,
+            # majoré : un job coupé en cours perd tout ce qu'il a calculé.
+            marge = max(PLANCHER_S, (max(durees) if durees else 0.0) * 1.25)
+
+            if on_reprend and libres > 0:
+                if restant < marge:
+                    on_reprend = False
+                    raison = f"budget épuisé ({restant:.0f} s restantes)"
+                else:
+                    rep = _demander(url, {**identite, "libres": libres,
+                                          "restant_s": round(restant, 1),
+                                          "resultats": a_rendre})
+                    a_rendre = []
+                    if rep.get("erreur"):
+                        on_reprend = False
+                        raison = f"serveur injoignable : {rep['erreur']}"
+                    else:
+                        bat.contact()
+                        # L'ordre d'arrêt voyage sur CE canal aussi : c'est celui qui
+                        # existe déjà et qui est le plus fréquent. Pas besoin d'attendre
+                        # un battement pour obéir.
+                        bat.lire_ordre(rep)
+                        jobs = [j for j in (rep.get("jobs") or []) if isinstance(j, dict)]
+                        if not jobs:
+                            on_reprend = False
+                            raison = "file vide"
+                        for j in jobs[:libres]:
+                            lances += 1
+                            f = ex.submit(process_job, j, f"{job_id}-{lances:03d}", progress)
+                            en_vol[f] = time.monotonic()
+                        if jobs:
+                            dire(etat())
+
+            if not en_vol:
+                break
+
+            # On attend qu'AU MOINS une place se libère, pas que tout soit fini.
+            termines, _ = wait(list(en_vol), return_when=FIRST_COMPLETED)
+            for f in termines:
+                parti = en_vol.pop(f)
+                durees.append(time.monotonic() - parti)
+                try:
+                    r = f.result()
+                except Exception as e:  # noqa: BLE001 — `process_job` ne lève jamais, ceinture
+                    r = {"status": "error", "code": "internal", "error": f"{type(e).__name__}: {e}"}
+                faits += 1
+                reussis += 1 if r.get("status") == "completed" else 0
+                a_rendre.append(_resume(r))
+            dire(etat())
+
+    bat.stop()
+
+    # Ce qui n'a pas pu voyager avec une demande suivante : sans ce dernier envoi, le
+    # serveur garderait ces réservations jusqu'à leur expiration.
+    if a_rendre:
+        _demander(url, {**identite, "libres": 0, "restant_s": 0, "fin": True,
+                        "resultats": a_rendre})
+
+    log.info("[%s] PRISE terminée : %d/%d sous-job(s) en %.0f s — %s",
+             job_id, reussis, faits, time.monotonic() - debut, raison)
     return {
         "status": "completed", "prise": True, "job_id": job_id,
-        "vagues": vagues, "total": total, "reussis": reussis, "echecs": total - reussis,
-        "capacite": capacite, "cartes": cartes, "gpu_name": registry.gpu_name(),
-        "arret": raison, "elapsed_s": round(time.monotonic() - debut, 3),
+        "total": faits, "reussis": reussis, "echecs": faits - reussis,
+        "places": places, "cartes": cartes, "gpu_name": registry.gpu_name(),
+        "arret": raison, "battements": bat.battus,
+        "elapsed_s": round(time.monotonic() - debut, 3),
         "provider": os.environ.get("SPARK_PROVIDER", ""),
     }
 

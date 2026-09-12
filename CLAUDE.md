@@ -32,6 +32,20 @@ Détails du contrat : [README.md](README.md).
 - **Vast.ai : image À PART, cœur COMMUN** (2026-09-12). `Dockerfile.vast` part de l'image de production et
   n'ajoute que `src` (le cœur à jour) et `vast_worker.py` ; Modal et RunPod gardent leur image, inchangée tant
   qu'on ne la rebâtit pas. NE PAS toucher à `modal_app.py` ni `handler.py` : ils marchent, c'est la consigne.
+- **LE WORKER VA CHERCHER SON TRAVAIL** (`claim_url`, 2026-09-12) — il compte ses cartes, tient 2 places
+  par carte TOUJOURS PLEINES, et redemande dès qu'une se libère. Rien à régler chez l'hébergeur : ni
+  `concurrency_modifier`, ni `@modal.concurrent`, ni variable d'environnement. File vide = il sort (jamais
+  de sondage : un worker qui attend est facturé à la milliseconde, cartes comprises). Le battement va vers
+  NOTRE serveur, donc sa réponse porte l'ordre d'arrêt (`{"arret":"doux"|"net"}`) — extinction à distance
+  sur les trois plateformes avec le même code. Détail : [docs/ARCHITECTURE_PRISE.md](docs/ARCHITECTURE_PRISE.md).
+- **RunPod ne livre pas toujours ce qu'on demande** : endpoint réglé sur 4 cartes, workers à 3 ou 4 selon
+  le moment — leur propre contrôle de démarrage le dit. C'est LA raison du mode prise : le serveur ne peut
+  pas deviner, le worker sait.
+- **On paie TOUT le démarrage chez RunPod** (vérifié sur leur facture, `GET /v1/billing/endpoints`) :
+  1 121,5 s facturées pour 464 s exécutées, ×2,42, et l'écart égale la somme des `delayTime`. Chez Vast le
+  tirage d'image est gratuit mais le stockage court tant que l'instance existe. Chez Modal, non documenté.
+  Ne JAMAIS facturer le démarrage à l'utilisateur : deux jobs identiques auraient 8 min d'écart selon le
+  hasard de l'ordonnancement. C'est un coût de plateforme.
 - **Le nombre de jobs se DÉDUIT de la carte et de la tâche** (`tasks.jobs_pour_vram`), activé par
   `SPARK_JOBS_AUTO` que SEUL `Dockerfile.vast` pose : `tasks.py` est partagé, et ni Modal ni RunPod ne posent
   `SPARK_JOBS_PER_GPU` — sans ce garde-fou ils passeraient de 1 à 4 jobs sans que personne l'ait demandé.

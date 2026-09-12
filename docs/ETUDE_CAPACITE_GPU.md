@@ -105,6 +105,21 @@ cartes par worker se configure — les deux leviers y jouent.
 la moitié reste libre. Sa limite est ailleurs : le délai de l'hébergeur (900 s
 chez Modal) et le transport.
 
+### Les cartes de RunPod (2026-09-12, endpoint réglé sur 4 cartes)
+
+| Carte | Séparation, 1 job |
+|---|---|
+| NVIDIA RTX A5000 | 4,65 Go |
+| RTX PRO 6000 Blackwell Server Edition MIG 1g.24gb | 4,65 Go |
+
+Huitième et neuvième cartes à donner le même chiffre. Le coût mémoire d'un job ne
+dépend décidément pas de la carte.
+
+**RunPod ne livre pas toujours quatre cartes.** Le même worker en a vu quatre à
+19 h 34 et trois à 20 h 06, d'après leur propre contrôle de démarrage
+(`GPU binary test passed: N GPU(s) healthy`). C'est ce qui a motivé le mode prise :
+le serveur ne peut pas deviner ce que l'hébergeur a livré.
+
 ### Gain de débit
 
 | Situation | Gain |

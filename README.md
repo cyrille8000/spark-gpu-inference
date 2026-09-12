@@ -137,6 +137,10 @@ refusé (vécu le 2026-09-12, conteneur en boucle de redémarrage).
 
 ## Prise : le worker va CHERCHER son travail
 
+> Architecture complète, mesures RunPod et facturation :
+> **[docs/ARCHITECTURE_PRISE.md](docs/ARCHITECTURE_PRISE.md)**.
+> Combien de jobs tient une carte : **[docs/ETUDE_CAPACITE_GPU.md](docs/ETUDE_CAPACITE_GPU.md)**.
+
 On demande quatre cartes à RunPod et on en reçoit parfois trois — leur propre contrôle
 de démarrage le dit (`GPU binary test passed: 3 GPU(s) healthy`, mesuré le 2026-09-12
 alors que l'endpoint est réglé sur 4). Le serveur ne peut donc pas savoir combien de
