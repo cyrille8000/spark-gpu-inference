@@ -237,8 +237,15 @@ def min_vram_gb() -> float:
 
 
 def verifier_carte() -> dict:
-    """Refuse de démarrer si la machine louée ne peut pas faire tourner l'image.
-    Rend la description de la carte, ou lève `SystemExit` avec la raison."""
+    """Refuse de demarrer si la machine louee ne peut rien faire tourner.
+
+    TOUTES les cartes sont controlees, pas seulement la premiere : une machine Vast.ai
+    peut en porter deux, quatre ou douze (constate le 2026-09-12), et rien ne garantit
+    qu'elles soient identiques, ni toutes libres, ni toutes du meme age. Celles qui
+    passent sont gardees et confiees au registre ; les autres sont ecartees, avec la
+    raison. Le worker ne demarre que s'il en reste au moins une — une carte ecartee en
+    silence ferait echouer un job au hasard des heures plus tard.
+    """
     try:
         import torch
     except Exception as e:  # noqa: BLE001
@@ -246,36 +253,53 @@ def verifier_carte() -> dict:
         raise SystemExit(3) from e
     if not torch.cuda.is_available():
         log.error("aucune carte utilisable : pilote NVIDIA trop ancien pour CUDA %s, "
-                  "conteneur lancé sans `--gpus`, ou machine sans GPU", torch.version.cuda)
+                  "conteneur lance sans `--gpus`, ou machine sans GPU", torch.version.cuda)
         raise SystemExit(3)
-    nom = torch.cuda.get_device_name(0)
-    majeur, mineur = torch.cuda.get_device_capability(0)
-    sm = f"sm_{majeur}{mineur}"
+
     arch = list(torch.cuda.get_arch_list())
-    total_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
-    if not carte_supportee(sm, arch):
-        log.error("%s (capacité %d.%d) n'est pas exécutable par ces roues torch %s+cu%s : elles exigent %s au "
-                  "minimum (compilées pour %s). Louer une carte de capacité >= %s — T4, RTX 20xx/30xx/40xx, "
-                  "A10, A100, A6000, L40S, H100 ; PAS de V100, P100 ni P40, quelle que soit leur mémoire ou la "
-                  "version CUDA de leur pilote.", nom, majeur, mineur, torch.__version__, torch.version.cuda,
-                  capacite_minimale(arch) or "?", arch, capacite_minimale(arch) or "?")
+    mini = capacite_minimale(arch) or "?"
+    gardees: list[str] = []
+    refus: list[str] = []
+    premiere: dict | None = None
+    for i in range(torch.cuda.device_count()):
+        nom = torch.cuda.get_device_name(i)
+        majeur, mineur = torch.cuda.get_device_capability(i)
+        sm = f"sm_{majeur}{mineur}"
+        total_gb = torch.cuda.get_device_properties(i).total_memory / 1e9
+        if not carte_supportee(sm, arch):
+            refus.append(f"cuda:{i} {nom} : capacite {majeur}.{mineur}, ces roues torch exigent {mini}")
+            continue
+        if total_gb + 0.5 < min_vram_gb():
+            refus.append(f"cuda:{i} {nom} : {total_gb:.1f} Go, moins que les {min_vram_gb():.0f} demandes")
+            continue
+        # Un vrai calcul, pas seulement l'inventaire : c'est lui qui revele un pilote
+        # boiteux ou une carte deja occupee par un autre locataire.
+        try:
+            x = torch.zeros(64, 64, device=f"cuda:{i}")
+            torch.mm(x, x)
+            torch.cuda.synchronize(i)
+        except Exception as e:  # noqa: BLE001
+            refus.append(f"cuda:{i} {nom} : refuse un calcul elementaire ({e})")
+            continue
+        gardees.append(f"cuda:{i}")
+        log.info("carte acceptee : cuda:%d %s (%s, %.1f Go)", i, nom, sm, total_gb)
+        if premiere is None:
+            premiere = {"gpu_name": nom, "sm": sm, "vram_total_gb": round(total_gb, 1)}
+    for r in refus:
+        log.warning("carte ecartee : %s", r)
+    if not premiere:
+        log.error("aucune carte de cette machine n'est exploitable par ces roues torch %s+cu%s "
+                  "(compilees pour %s, capacite minimale %s). Louer une carte de capacite >= %s — "
+                  "T4, RTX 20xx/30xx/40xx, A10, A100, A6000, L40S, H100 ; PAS de V100, P100 ni P40, "
+                  "quelle que soit leur memoire ou la version CUDA de leur pilote.",
+                  torch.__version__, torch.version.cuda, arch, mini, mini)
         raise SystemExit(3)
-    if total_gb + 0.5 < min_vram_gb():
-        log.error("%s n'a que %.1f Go : moins que les %.0f Go demandés (SPARK_MIN_VRAM_GB) — "
-                  "un chunk long déborderait en plein job", nom, total_gb, min_vram_gb())
-        raise SystemExit(3)
-    # Un vrai calcul, pas seulement l'inventaire : c'est lui qui révèle un pilote
-    # boiteux ou une carte déjà occupée par un autre locataire.
-    try:
-        x = torch.zeros(64, 64, device="cuda")
-        torch.mm(x, x)
-        torch.cuda.synchronize()
-    except Exception as e:  # noqa: BLE001
-        log.error("la carte %s refuse un calcul élémentaire : %s", nom, e)
-        raise SystemExit(3) from e
-    log.info("carte acceptée : %s (%s, %.1f Go), torch %s+cu%s", nom, sm, total_gb,
+
+    registry.limiter_cartes(gardees)
+    log.info("%d carte(s) retenue(s) : %s — torch %s+cu%s", len(gardees), ", ".join(gardees),
              torch.__version__, torch.version.cuda)
-    return {"gpu_name": nom, "sm": sm, "vram_total_gb": round(total_gb, 1),
+    return {**premiere, "cartes": gardees, "nb_cartes": len(gardees),
+            "vram_machine_gb": round(registry.vram_machine_gb() or 0.0, 1),
             "torch": torch.__version__, "cuda": torch.version.cuda, "arch_list": arch}
 
 
@@ -286,6 +310,9 @@ def etat_worker() -> dict:
         "gpu_name": registry.gpu_name(),
         "device": registry.device(),
         "vram_total_gb": registry.vram_total_gb(),
+        # Somme des cartes : c'est elle qui borne ce que le conteneur absorbe.
+        "vram_machine_gb": registry.vram_machine_gb(),
+        "cartes": registry.devices(),
         "vram": memoire_carte(),
         "machine": machine(),
         "cuda": _cuda_info(),
@@ -433,10 +460,11 @@ def main() -> None:
     serveur = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     serveur.daemon_threads = True
     threading.Thread(target=surveiller_inactivite, args=(serveur,), daemon=True).start()
-    log.info("worker prêt sur :%d — %s (%s), %s Go, %d conversion(s) vocale(s) ou %d séparation(s) "
-             "en parallèle, arrêt après %d s d'inactivité", port, carte["gpu_name"], carte["sm"],
-             carte["vram_total_gb"], jobs_per_gpu("chatterbox_vc"), jobs_per_gpu("bs_roformer_leap_xe"),
-             idle_exit_s())
+    log.info("worker prêt sur :%d — %d x %s (%s), %s Go par carte / %s Go au total, "
+             "%d conversion(s) vocale(s) ou %d séparation(s) en parallèle, arrêt après %d s d'inactivité",
+             port, carte["nb_cartes"], carte["gpu_name"], carte["sm"], carte["vram_total_gb"],
+             carte["vram_machine_gb"], jobs_per_gpu("chatterbox_vc"),
+             jobs_per_gpu("bs_roformer_leap_xe"), idle_exit_s())
     serveur.serve_forever()
 
 

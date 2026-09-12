@@ -152,7 +152,12 @@ def jobs_per_gpu(modele: str = "chatterbox_vc") -> int:
         plafond = int(os.environ.get("SPARK_JOBS_MAX", PLAFOND_DEFAUT))
     except ValueError:
         plafond = PLAFOND_DEFAUT
-    return jobs_pour_vram(modele, registry.vram_total_gb(), None, max(1, plafond))
+    # `jobs_pour_vram` raisonne sur UNE carte — un job ne s'etale jamais sur deux GPU.
+    # Ce que le conteneur peut absorber, c'est cette place multipliee par le nombre de
+    # cartes de la machine (mesure du 2026-09-12 : une machine Vast peut en porter
+    # deux, quatre, douze).
+    par_carte = jobs_pour_vram(modele, registry.vram_total_gb(), None, max(1, plafond))
+    return par_carte * max(1, len(registry.devices()))
 
 
 def run_task(inp: dict, job_id: str, progress: Progress) -> dict:
@@ -251,7 +256,7 @@ def _run_instrumental(req: InstrumentalRequest, workdir: Path, job_id: str, prog
     def separate():
         nonlocal cold_start
         with _lease("bs_roformer_leap_xe",
-                    lambda: InstrumentalSeparator(BSROFORMER_DIR, registry.device()), timer) as (sep, cold):
+                    lambda carte: InstrumentalSeparator(BSROFORMER_DIR, carte), timer) as (sep, cold):
             cold_start = cold_start or cold
             report(10, "séparation BS-Roformer")
             with timer.step("inference"):
@@ -303,7 +308,7 @@ def _run_vc(req: VcRequest, workdir: Path, job_id: str, progress: Progress, time
 
     def convert():
         nonlocal cold_start
-        with _lease("chatterbox_vc", lambda: VoiceConverter(CHATTERBOX_DIR, registry.device()), timer) as (vc, cold):
+        with _lease("chatterbox_vc", lambda carte: VoiceConverter(CHATTERBOX_DIR, carte), timer) as (vc, cold):
             cold_start = cold_start or cold
             with timer.step("inference"):
                 return vc.run(source, refs, prompt, req.params, workdir,
