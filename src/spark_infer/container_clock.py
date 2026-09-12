@@ -1,48 +1,84 @@
-"""Horloge du conteneur : le temps que ce processus a occupé depuis le job
-précédent, ou depuis son démarrage pour le premier job.
+"""Horloge du conteneur : le temps que ce processus a occupé, RÉPARTI entre les
+jobs qui s'y sont croisés.
 
-Modal et RunPod facturent le CONTENEUR, du démarrage à l'extinction — pas
-seulement le temps passé dans le handler (`elapsed_s`). Comme un conteneur
-traite ses jobs l'un après l'autre (un input à la fois, c'est le réglage ici),
-il peut rapporter à la fin de chaque job la fenêtre qu'il a occupée depuis le
-rapport précédent : boot du processus + attente + job. La somme sur tous les
-jobs d'un conteneur = sa vie entière, à la queue d'inactivité finale près
-(`scaledown_window` Modal, idle timeout RunPod), qu'on garde courte.
+Modal et RunPod facturent le CONTENEUR, du démarrage à l'extinction, pas
+seulement le temps passé dans le handler (`elapsed_s`). Tant qu'un conteneur ne
+traitait qu'un job à la fois, chaque job rapportait simplement la fenêtre écoulée
+depuis le rapport précédent (boot + attente + job).
+
+Depuis le 2026-09-12 un conteneur peut traiter PLUSIEURS jobs en même temps, et
+cette fenêtre n'appartient plus à un seul : chaque seconde est partagée entre les
+jobs actifs à cet instant. Une seconde où trois jobs tournent vaut un tiers de
+seconde pour chacun. Le temps où AUCUN job ne tourne (boot, attente entre deux
+jobs) est mis de côté et revient au prochain job qui démarre. La somme des parts
+de tous les jobs reste donc la vie entière du conteneur, à la queue d'inactivité
+finale près (`scaledown_window` Modal, idle timeout RunPod), qu'on garde courte.
 
 Mesure réelle, pas estimation : `time.monotonic()` du processus. Ce qui précède
-le démarrage du processus (chargement de l'image par l'hébergeur) n'est pas
-visible d'ici et reste hors compteur.
+le démarrage du processus (l'hébergeur qui tire l'image) n'est pas visible d'ici.
 """
 from __future__ import annotations
 
+import threading
 import time
 
 
 class ContainerClock:
-    """Un compteur par processus. Pas de verrou : un job à la fois par conteneur."""
+    """Compteur par processus, sûr entre fils : plusieurs jobs peuvent entrer et sortir."""
 
     def __init__(self, now: float | None = None) -> None:
-        self._start = time.monotonic() if now is None else now
-        self._last = self._start
-        self._jobs = 0
+        t = time.monotonic() if now is None else now
+        self._start = t
+        self._mark = t                      # dernier instant distribué
+        self._pending = 0.0                 # temps sans aucun job actif, en attente
+        self._parts: dict[str, float] = {}  # part accumulée par job en cours
+        self._done = 0                      # jobs ayant fermé leur part
+        self._lock = threading.Lock()
 
+    # ── lecture ──
     def is_first(self) -> bool:
-        """Vrai tant qu'aucun job n'a fermé sa fenêtre : le job en cours est le premier du conteneur."""
-        return self._jobs == 0
+        """Vrai tant qu'aucun job n'a fermé sa part : le conteneur n'a encore rien rendu."""
+        return self._done == 0
 
     def uptime(self, now: float | None = None) -> float:
         """Secondes depuis le démarrage du processus."""
         t = time.monotonic() if now is None else now
         return max(0.0, t - self._start)
 
-    def window(self, now: float | None = None) -> tuple[float, bool]:
-        """Ferme la fenêtre courante : (secondes depuis le rapport précédent, premier job du conteneur ?)."""
+    def active(self) -> int:
+        """Jobs actuellement en cours dans ce conteneur."""
+        with self._lock:
+            return len(self._parts)
+
+    # ── comptage ──
+    def _distribute(self, now: float) -> None:
+        """Attribue le temps écoulé depuis `_mark` : aux jobs actifs, ou à l'attente."""
+        delta = max(0.0, now - self._mark)
+        self._mark = now
+        if not self._parts:
+            self._pending += delta
+            return
+        part = delta / len(self._parts)
+        for k in self._parts:
+            self._parts[k] += part
+
+    def enter(self, job_id: str, now: float | None = None) -> None:
+        """Un job commence : le temps mort accumulé (boot, attente) lui est attribué."""
         t = time.monotonic() if now is None else now
-        first = self._jobs == 0
-        seconds = max(0.0, t - self._last)
-        self._last = t
-        self._jobs += 1
-        return seconds, first
+        with self._lock:
+            self._distribute(t)
+            self._parts[job_id] = self._parts.get(job_id, 0.0) + self._pending
+            self._pending = 0.0
+
+    def leave(self, job_id: str, now: float | None = None) -> tuple[float, bool]:
+        """Un job finit : (secondes de conteneur qui lui reviennent, premier job à finir ?)."""
+        t = time.monotonic() if now is None else now
+        with self._lock:
+            self._distribute(t)
+            seconds = self._parts.pop(job_id, 0.0)
+            first = self._done == 0
+            self._done += 1
+            return round(seconds, 3), first
 
 
 CLOCK = ContainerClock()

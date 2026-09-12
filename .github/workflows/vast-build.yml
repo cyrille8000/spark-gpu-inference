@@ -1,0 +1,80 @@
+# =============================================================================
+# Build & push de l'image Vast.ai vers GHCR
+#   ghcr.io/<owner>/spark-gpu-inference-vast:sha-<commit>
+#
+# Elle part de l'image de PRODUCTION (celle de Modal et RunPod) et n'ajoute que
+# deux couches : le cœur du dépôt et le worker HTTP. Quelques secondes de build,
+# presque rien à tirer en plus sur un pod, et surtout AUCUN effet sur l'image de
+# base tant qu'on ne la rebâtit pas.
+#
+# Déclencheurs : lancement manuel (on choisit la base et on mesure quand on veut),
+# et push des seuls fichiers propres à Vast.ai.
+# =============================================================================
+name: Build and Push Vast.ai Image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "vast_worker.py"
+      - "Dockerfile.vast"
+      - ".github/workflows/vast-build.yml"
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Image de base (tag GHCR de l'image de production)"
+        required: false
+        default: "ghcr.io/cyrille8000/spark-gpu-inference:sha-a9ec11c"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}-vast
+
+concurrency:
+  group: vast-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Vast.ai image
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.vast
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            BASE=${{ inputs.base || 'ghcr.io/cyrille8000/spark-gpu-inference:sha-a9ec11c' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

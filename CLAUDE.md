@@ -29,6 +29,21 @@ Détails du contrat : [README.md](README.md).
   se touchent). Dernière frontière qui tient dans `window_s` ; le creux d'énergie des 10 s avant la cible n'est plus
   qu'un REPLI (segment plus long que la fenêtre, ou appelant sans `cuts_s`). Ne pas réintroduire de détection de
   silence en premier choix.
+- **Vast.ai : image À PART, cœur COMMUN** (2026-09-12). `Dockerfile.vast` part de l'image de production et
+  n'ajoute que `src` (le cœur à jour) et `vast_worker.py` ; Modal et RunPod gardent leur image, inchangée tant
+  qu'on ne la rebâtit pas. NE PAS toucher à `modal_app.py` ni `handler.py` : ils marchent, c'est la consigne.
+- **Un pod Vast.ai fait tourner PLUSIEURS jobs à la fois** (`SPARK_JOBS_PER_GPU`, défaut 1) — il se loue à
+  l'heure, carte entière, donc on ne le rentabilise qu'en le remplissant. D'où le POOL d'instances
+  (`registry.lease`) : sans lui, deux conversions vocales se volent leur voix de référence (chaque job écrit sa
+  config et sa référence DANS le modèle, `vc_engine._configure` / `_set_reference`) — corruption silencieuse, pas
+  un plantage. Le temps conteneur est réparti entre les jobs qui se croisent (`container_clock`), sinon un
+  conteneur à trois jobs se ferait facturer trois fois son temps.
+- **Vast.ai loue de tout : la carte est vérifiée AU DÉMARRAGE** (`vast_worker.verifier_carte`) — CUDA initialisable,
+  architecture présente dans `torch.cuda.get_arch_list()` (Pascal `sm_61` des P40 = refus), mémoire ≥
+  `SPARK_MIN_VRAM_GB`, plus un vrai petit calcul. Un pod se paie dès qu'il démarre : échouer vite et clairement
+  vaut mieux que découvrir « no kernel image » au premier job. Filtrer les offres sur `cuda_max_good >= 12.8`.
+- **Combien de jobs en parallèle : ça se MESURE** (`scripts/bench_concurrence.py`, vagues de 1, 2, 4…). Un gain de
+  débit proche de ×1 = carte déjà saturée, le parallélisme ne fait que coûter de la mémoire.
 - **Chaque job rapporte son PIC de mémoire GPU** (`gpu_mem.allocated_gb` / `reserved_gb`, `gpu_mem_total_gb` —
   `registry.reset_peak_memory()` au début, `peak_memory_gb()` à la fin). C'est `reserved` qui dit si un GPU suffit ;
   avant le 2026-09-12 on ne connaissait la consommation que par l'OOM du 2026-09-11 (VC 179 s = plus de 22,5 Go).

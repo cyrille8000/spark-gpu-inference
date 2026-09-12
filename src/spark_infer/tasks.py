@@ -10,6 +10,7 @@ import os
 import shutil
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable
 
@@ -57,23 +58,48 @@ class Timer:
         return round(time.monotonic() - self.t0, 3)
 
 
+def jobs_per_gpu() -> int:
+    """Jobs qu'un conteneur fait tourner EN MÊME TEMPS sur sa carte (`SPARK_JOBS_PER_GPU`,
+    défaut 1). C'est aussi la taille de chaque pool de modèles : au-delà, un job attend
+    une instance libre. À monter seulement d'après la mesure `gpu_mem` d'un vrai job —
+    chaque instance coûte ses poids, et le débit ne suit pas forcément (le GPU peut
+    déjà être saturé en calcul)."""
+    try:
+        n = int(os.environ.get("SPARK_JOBS_PER_GPU", "1"))
+    except ValueError:
+        return 1
+    return max(1, min(32, n))
+
+
 def run_task(inp: dict, job_id: str, progress: Progress) -> dict:
     task = parse_task(inp)
     workdir = Path(tempfile.mkdtemp(prefix=f"spark-{task}-", dir=os.environ.get("SPARK_TMPDIR") or None))
     timer = Timer()
-    registry.reset_peak_memory()
+    # Le pic mémoire est celui de la CARTE : on ne le remet à zéro que si personne
+    # d'autre ne travaille, sinon on fausserait la mesure du voisin.
+    seul_au_depart = registry.active() == 0
+    if seul_au_depart:
+        registry.reset_peak_memory()
+    voisins = registry.active()
     try:
         if task == "instrumental":
             result = _run_instrumental(parse_instrumental(inp), workdir, job_id, progress, timer)
         else:
             result = _run_vc(parse_vc(inp), workdir, job_id, progress, timer)
+        # Mémoire : `jobs` = le plus grand nombre de jobs qui se sont croisés pendant
+        # celui-ci (1 = mesure propre, ce job seul) ; `clean` = le compteur partait de
+        # zéro. Sans ça, un pic mesuré à plusieurs serait pris pour le coût d'un job.
+        mem = registry.peak_memory_gb()
+        if mem is not None:
+            mem.update({"jobs": max(1, voisins, registry.active()), "clean": seul_au_depart})
         result.update({
             "status": "completed", "task": task, "job_id": job_id,
             "elapsed_s": timer.total(), "timings": timer.timings,
             "device": registry.device(), "gpu_name": registry.gpu_name(),
-            "models_loaded": registry.loaded(),
-            # Ce que le job a VRAIMENT demande a la carte, et ce qu'elle offre.
-            "gpu_mem": registry.peak_memory_gb(), "gpu_mem_total_gb": registry.vram_total_gb(),
+            "models_loaded": registry.loaded(), "pools": registry.pool_state(),
+            "jobs_per_gpu": jobs_per_gpu(),
+            # Ce que le job a VRAIMENT demandé à la carte, et ce qu'elle offre.
+            "gpu_mem": mem, "gpu_mem_total_gb": registry.vram_total_gb(),
         })
         return result
     finally:
@@ -102,12 +128,18 @@ def _with_oom_retry(job_id: str, what: str, fn: Callable[[], object], keep: str 
             registry.release()
 
 
-def _load(name: str, factory: Callable[[], object], timer: Timer) -> tuple[object, bool]:
-    """Modèle résident ; renvoie (modèle, chargé_maintenant). Le chargement est chronométré à part."""
-    cold = name not in registry.loaded()
+@contextmanager
+def _lease(name: str, factory: Callable[[], object], timer: Timer):
+    """Emprunte une instance du modèle POUR CE JOB (rendue à la sortie du bloc) ;
+    donne (modèle, chargé_maintenant). L'attente d'une instance libre et le
+    chargement sont chronométrés ensemble sous `model_load`."""
     with timer.step("model_load"):
-        model = registry.get(name, factory)
-    return model, cold
+        bail = registry.lease(name, factory, jobs_per_gpu())
+        model, cold = bail.__enter__()
+    try:
+        yield model, cold
+    finally:
+        bail.__exit__(None, None, None)
 
 
 # ============================================================ INSTRUMENTAL (BS-Roformer Leap Xe)
@@ -134,12 +166,12 @@ def _run_instrumental(req: InstrumentalRequest, workdir: Path, job_id: str, prog
 
     def separate():
         nonlocal cold_start
-        sep, cold = _load("bs_roformer_leap_xe",
-                          lambda: InstrumentalSeparator(BSROFORMER_DIR, registry.device()), timer)
-        cold_start = cold_start or cold
-        report(10, "séparation BS-Roformer")
-        with timer.step("inference"):
-            return sep.separate(mix_wav, workdir)
+        with _lease("bs_roformer_leap_xe",
+                    lambda: InstrumentalSeparator(BSROFORMER_DIR, registry.device()), timer) as (sep, cold):
+            cold_start = cold_start or cold
+            report(10, "séparation BS-Roformer")
+            with timer.step("inference"):
+                return sep.separate(mix_wav, workdir)
 
     inst_wav, attempts = _with_oom_retry(job_id, "séparation", separate, keep="bs_roformer_leap_xe")
     report(90, "encodage")
@@ -187,11 +219,11 @@ def _run_vc(req: VcRequest, workdir: Path, job_id: str, progress: Progress, time
 
     def convert():
         nonlocal cold_start
-        vc, cold = _load("chatterbox_vc", lambda: VoiceConverter(CHATTERBOX_DIR, registry.device()), timer)
-        cold_start = cold_start or cold
-        with timer.step("inference"):
-            return vc.run(source, refs, prompt, req.params, workdir,
-                          progress=lambda p, m: report(5 + int(p * 0.85), m), cuts_s=req.cuts_s)
+        with _lease("chatterbox_vc", lambda: VoiceConverter(CHATTERBOX_DIR, registry.device()), timer) as (vc, cold):
+            cold_start = cold_start or cold
+            with timer.step("inference"):
+                return vc.run(source, refs, prompt, req.params, workdir,
+                              progress=lambda p, m: report(5 + int(p * 0.85), m), cuts_s=req.cuts_s)
 
     (wav, sr, meta), attempts = _with_oom_retry(job_id, "conversion vocale", convert, keep="chatterbox_vc")
 

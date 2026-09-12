@@ -45,6 +45,9 @@ def process_job(inp: dict, job_id: str, progress: Progress | None = None) -> dic
     # 1. started — avant tout travail : GPU, conteneur neuf ou réutilisé, modèles déjà résidents.
     started_at = now_iso()
     t0 = time.monotonic()
+    # Le job prend sa part du temps conteneur à partir de MAINTENANT (le temps mort
+    # qui précède lui revient) ; il la ferme dans le `finally`, quoi qu'il arrive.
+    CLOCK.enter(job_id)
     if hooks is not None:
         hooks.started(gpu_name=registry.gpu_name(), device=registry.device(),
                       container_first_job=CLOCK.is_first(), container_uptime_s=CLOCK.uptime(),
@@ -73,7 +76,7 @@ def process_job(inp: dict, job_id: str, progress: Progress | None = None) -> dic
 
     # Ce que l'hébergeur FACTURE : la fenêtre conteneur depuis le rapport
     # précédent (boot + attente + ce job), succès comme échec. Voir container_clock.
-    container_s, first = CLOCK.window()
+    container_s, first = CLOCK.leave(job_id)
     result.update({
         "task": result.get("task") or task,
         # Le GPU, succès COMME échec : sans lui, la plateforme facturait un échec

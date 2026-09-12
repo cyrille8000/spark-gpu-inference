@@ -1,0 +1,40 @@
+# Image Vast.ai — l'image de PRODUCTION, plus le worker HTTP et le cœur à jour.
+#
+# Pourquoi partir de l'image publiée plutôt que tout rebâtir : les 5,3 Go de
+# torch, de CUDA et de poids sont déjà là, relus et éprouvés sur Modal et
+# RunPod. On ne pose que deux couches de quelques kilo-octets, donc le build
+# dure quelques secondes et Vast.ai ne tire presque rien de plus.
+#
+# Et pourquoi ne PAS toucher à l'image de base : Modal et RunPod tournent
+# dessus et fonctionnent. Le cœur recopié ici (`src`) peut donc évoluer — pool
+# d'instances, temps conteneur partagé — sans que rien ne bouge en production
+# tant que l'image de base n'est pas rebâtie volontairement.
+#
+#   docker build -f Dockerfile.vast -t spark-gpu-vast:dev .
+#   docker build -f Dockerfile.vast --build-arg BASE=ghcr.io/…:sha-xxxxxxx -t … .
+ARG BASE=ghcr.io/cyrille8000/spark-gpu-inference:sha-a9ec11c
+FROM ${BASE}
+
+# Le cœur du dépôt PAR-DESSUS celui de l'image : c'est lui qui porte le pool
+# d'instances (`registry.lease`) sans lequel deux conversions vocales simultanées
+# se voleraient leur voix de référence.
+COPY src /app/src
+COPY vast_worker.py /app/vast_worker.py
+
+ENV SPARK_PROVIDER=vastai \
+    SPARK_WORKER_PORT=8000 \
+    # Un job à la fois par défaut : le parallélisme ne s'active qu'après la
+    # mesure `gpu_mem` d'un vrai job sur la carte visée.
+    SPARK_JOBS_PER_GPU=1 \
+    # Une carte de moins de 24 Go est refusée au démarrage, avant tout job.
+    SPARK_MIN_VRAM_GB=24 \
+    # Un pod loué et oublié coûte : sans job pendant ce temps, le worker s'arrête.
+    SPARK_IDLE_EXIT_S=900
+
+EXPOSE 8000
+
+# Vérification hors ligne : le worker s'importe sans GPU (le serveur, lui, refuse
+# de démarrer sans carte utilisable — cf. `verifier_carte`).
+RUN python -c "import ast, pathlib; ast.parse(pathlib.Path('/app/vast_worker.py').read_text(encoding='utf-8'))"
+
+CMD ["python", "-u", "/app/vast_worker.py"]

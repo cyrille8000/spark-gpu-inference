@@ -85,6 +85,32 @@ sortie est reconvertie seule et **collée bout à bout, sans recouvrement ni fon
 `tail_passes` compte ces passes. Le filigrane Perth de Chatterbox est conservé (comportement natif de `generate`).
 Un seul tirage par job (décision du 2026-09-09) : pas de best-of-N, donc ni scorer ECAPA, ni Whisper, ni `resemble-enhance`.
 
+## Vast.ai (image à part, cœur commun)
+
+Un pod se loue à l'heure, carte entière : on le remplit au lieu de lui donner un job à la fois.
+
+```bash
+# construire (quelques secondes : deux couches par-dessus l'image de production)
+docker build -f Dockerfile.vast -t spark-gpu-vast:dev .
+
+# lancer sur le pod
+docker run --gpus all -p 8000:8000   -e SPARK_WORKER_TOKEN=… -e SPARK_JOBS_PER_GPU=4 -e SPARK_MIN_VRAM_GB=24   ghcr.io/cyrille8000/spark-gpu-inference-vast:sha-xxxxxxx
+
+# mesurer ce que la carte encaisse
+python scripts/bench_concurrence.py --url http://<ip>:<port> --token … --job banc_vc.json --vagues 1,2,4
+```
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `SPARK_WORKER_TOKEN` | — | OBLIGATOIRE : un pod est sur l'Internet public |
+| `SPARK_JOBS_PER_GPU` | 1 | jobs simultanés = taille des pools de modèles |
+| `SPARK_MIN_VRAM_GB` | 24 | refus au démarrage sous ce seuil |
+| `SPARK_IDLE_EXIT_S` | 900 | arrêt après ce temps sans job (0 = jamais) |
+
+`POST /run` (synchrone), `POST /submit` (rappel `callback_url`, comme Modal et RunPod), `GET /status`,
+`GET /health`, `POST /shutdown`. Le worker refuse de démarrer si la carte ne peut pas exécuter l'image :
+pilote trop ancien, architecture absente des roues torch (Pascal), ou mémoire insuffisante.
+
 ## Sortie
 
 ```json
