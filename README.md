@@ -108,8 +108,21 @@ python scripts/bench_concurrence.py --url http://<ip>:<port> --token … --job b
 | `SPARK_IDLE_EXIT_S` | 900 | arrêt après ce temps sans job (0 = jamais) |
 
 `POST /run` (synchrone), `POST /submit` (rappel `callback_url`, comme Modal et RunPod), `GET /status`,
-`GET /health`, `POST /shutdown`. Le worker refuse de démarrer si la carte ne peut pas exécuter l'image :
-pilote trop ancien, architecture absente des roues torch (Pascal), ou mémoire insuffisante.
+`GET /health`, `POST /shutdown`. Le worker refuse de démarrer si la carte ne peut pas exécuter l'image.
+
+**Quelles cartes louer.** Ces roues (torch 2.7.1+cu128) exigent une capacité de calcul **>= 7.5**, et c'est la
+carte qui compte, pas la version CUDA de son pilote : un V100 sur pilote CUDA 13.0 reste en capacité 7.0, donc
+refusé (vécu le 2026-09-12, conteneur en boucle de redémarrage).
+
+| Louer | Capacité | Mémoire |
+|---|---|---|
+| RTX 3090 / A6000 | 8.6 | 24 / 48 Go |
+| RTX 4090 / L40S | 8.9 | 24 / 48 Go |
+| A100 | 8.0 | 40 / 80 Go |
+| H100 | 9.0 | 80 Go |
+| T4, A10 | 7.5 / 8.6 | 16 / 24 Go |
+
+À écarter quelle que soit leur mémoire ou leur prix : **V100, P100, P40** et tout ce qui précède Turing.
 
 ## Sortie
 

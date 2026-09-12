@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from vast_worker import Etat, carte_supportee, jeton_valide  # noqa: E402
+from vast_worker import Etat, capacite_minimale, carte_supportee, jeton_valide  # noqa: E402
 
 
 def test_jeton_exige_et_compare_les_deux_formes():
@@ -37,6 +37,17 @@ def test_cartes_acceptees_et_refusees():
     assert carte_supportee("sm_121", ["sm_120", "compute_120"]) is True
     assert carte_supportee("sm_89", ["sm_120", "compute_120"]) is False
     assert carte_supportee("inconnu", arch) is False
+
+
+def test_capacite_minimale_lue_dans_les_roues():
+    """Ce qui décide est la capacité de la CARTE, pas la version CUDA du pilote : le
+    V100 refusé le 2026-09-12 tournait sur un pilote CUDA 13.0 et restait en 7.0."""
+    reelle = ["sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120", "compute_120"]
+    assert capacite_minimale(reelle) == "7.5"          # torch 2.7.1+cu128, mesuré sur le pod
+    assert carte_supportee("sm_70", reelle) is False   # V100 : sous le plancher
+    assert carte_supportee("sm_75", reelle) is True    # T4
+    assert capacite_minimale(["sm_120", "compute_120"]) == "12.0"
+    assert capacite_minimale(["compute_120"]) is None
 
 
 def test_etat_suit_les_jobs_et_l_inactivite():

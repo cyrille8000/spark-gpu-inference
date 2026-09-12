@@ -37,8 +37,13 @@ dès que le pod démarre :
     les P40 24 Go encore nombreuses là-bas) — « no kernel image is available ».
 `verifier_carte()` tranche AU DÉMARRAGE, avant d'accepter le moindre job : le
 worker s'arrête avec un message clair, le pod peut être détruit tout de suite.
-Côté location, filtrer les offres sur `cuda_max_good >= 12.8` et la mémoire
-demandée (`SPARK_MIN_VRAM_GB`, défaut 24) évite d'en arriver là.
+Côté location, ce qui compte est la CAPACITÉ DE CALCUL de la carte, pas la
+version CUDA de son pilote : un V100 sur un pilote CUDA 13.0 annonce
+`cuda_max_good: 13.0` et reste refusé, parce qu'il est de capacité 7.0 quand ces
+roues en exigent 7.5 (vécu le 2026-09-12 sur un V100 32 Go à 0,041 $/h — le
+conteneur redémarrait en boucle toutes les 12 s, facturées). À louer : T4,
+RTX 20xx/30xx/40xx, A10, A100, A6000, L40S, H100. À écarter, quelle que soit
+leur mémoire : V100, P100, P40, et tout ce qui est antérieur.
 """
 from __future__ import annotations
 
@@ -157,6 +162,16 @@ def carte_supportee(sm: str, arch_list: list[str]) -> bool:
     return any(p <= n for p in ptx)
 
 
+def capacite_minimale(arch_list: list[str]) -> str | None:
+    """La plus petite capacité que ces roues savent exécuter, lue dans la liste compilée
+    (`sm_75` → « 7.5 »). C'est ELLE qui décide, pas la version CUDA du pilote : un V100
+    sur un pilote CUDA 13 reste une capacité 7.0, donc refusée. Pur."""
+    nums = sorted(int(a.removeprefix("sm_")) for a in arch_list if a.startswith("sm_"))
+    if not nums:
+        return None
+    return f"{nums[0] // 10}.{nums[0] % 10}"
+
+
 def min_vram_gb() -> float:
     try:
         return float(os.environ.get("SPARK_MIN_VRAM_GB", "24"))
@@ -182,8 +197,11 @@ def verifier_carte() -> dict:
     arch = list(torch.cuda.get_arch_list())
     total_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
     if not carte_supportee(sm, arch):
-        log.error("%s (%s) n'est pas exécutable par ces roues torch %s+cu%s (compilées pour %s) — "
-                  "louer une carte Volta ou plus récente", nom, sm, torch.__version__, torch.version.cuda, arch)
+        log.error("%s (capacité %d.%d) n'est pas exécutable par ces roues torch %s+cu%s : elles exigent %s au "
+                  "minimum (compilées pour %s). Louer une carte de capacité >= %s — T4, RTX 20xx/30xx/40xx, "
+                  "A10, A100, A6000, L40S, H100 ; PAS de V100, P100 ni P40, quelle que soit leur mémoire ou la "
+                  "version CUDA de leur pilote.", nom, majeur, mineur, torch.__version__, torch.version.cuda,
+                  capacite_minimale(arch) or "?", arch, capacite_minimale(arch) or "?")
         raise SystemExit(3)
     if total_gb + 0.5 < min_vram_gb():
         log.error("%s n'a que %.1f Go : moins que les %.0f Go demandés (SPARK_MIN_VRAM_GB) — "

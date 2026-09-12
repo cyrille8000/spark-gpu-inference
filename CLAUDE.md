@@ -39,9 +39,13 @@ Détails du contrat : [README.md](README.md).
   un plantage. Le temps conteneur est réparti entre les jobs qui se croisent (`container_clock`), sinon un
   conteneur à trois jobs se ferait facturer trois fois son temps.
 - **Vast.ai loue de tout : la carte est vérifiée AU DÉMARRAGE** (`vast_worker.verifier_carte`) — CUDA initialisable,
-  architecture présente dans `torch.cuda.get_arch_list()` (Pascal `sm_61` des P40 = refus), mémoire ≥
-  `SPARK_MIN_VRAM_GB`, plus un vrai petit calcul. Un pod se paie dès qu'il démarre : échouer vite et clairement
-  vaut mieux que découvrir « no kernel image » au premier job. Filtrer les offres sur `cuda_max_good >= 12.8`.
+  architecture présente dans `torch.cuda.get_arch_list()`, mémoire ≥ `SPARK_MIN_VRAM_GB`, plus un vrai petit calcul.
+  Un pod se paie dès qu'il démarre : échouer vite et clairement vaut mieux que découvrir « no kernel image » au
+  premier job — et un conteneur qui sort en erreur est RELANCÉ en boucle par Vast.ai, donc facturé.
+- **CAPACITÉ DE CALCUL >= 7.5, et c'est la carte qui compte, pas le pilote.** torch 2.7.1+cu128 est compilé pour
+  `['sm_75','sm_80','sm_86','sm_90','sm_100','sm_120','compute_120']` (relevé sur un pod le 2026-09-12) : un V100
+  32 Go à 0,041 $/h sur pilote CUDA 13.0 a été REFUSÉ, `cuda_max_good` élevé ou pas. À louer : T4, RTX 20xx/30xx/40xx,
+  A10, A100, A6000, L40S, H100 ; jamais V100, P100, P40.
 - **Combien de jobs en parallèle : ça se MESURE** (`scripts/bench_concurrence.py`, vagues de 1, 2, 4…). Un gain de
   débit proche de ×1 = carte déjà saturée, le parallélisme ne fait que coûter de la mémoire.
 - **Chaque job rapporte son PIC de mémoire GPU** (`gpu_mem.allocated_gb` / `reserved_gb`, `gpu_mem_total_gb` —
