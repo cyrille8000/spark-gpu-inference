@@ -193,3 +193,32 @@ def test_deux_lots_de_suite_reutilisent_les_memes_exemplaires(monkeypatch):
     assert len(charges) == 5, f"{len(charges)} chargements au lieu de 5 : le second lot a rechargé"
     assert set(tenus_par_lot[0]) == set(tenus_par_lot[1])
 
+
+def test_un_lot_qui_ne_tombe_pas_juste_sur_les_cartes(monkeypatch):
+    """8 sous-jobs sur 3 cartes doivent TOUS partir ensemble : 3, 3 et 2.
+
+    Avec une division entiere (8 // 3 = 2 par carte) il n'y avait que 6 instances et
+    deux sous-jobs attendaient. Mesure du 2026-09-12 sur RunPod : 143 s pour le lot,
+    contre 85 s sur un worker a 4 cartes ou le compte tombait juste.
+    """
+    croisement = {"max": 0, "actuel": 0}
+    verrou = threading.Lock()
+
+    def faux_run_task(inp, job_id, progress):
+        with registry.lease("bs_roformer_leap_xe", lambda c: object(), tasks.jobs_per_gpu("x")) as (i, _):
+            with verrou:
+                croisement["actuel"] += 1
+                croisement["max"] = max(croisement["max"], croisement["actuel"])
+            time.sleep(0.15)
+            with verrou:
+                croisement["actuel"] -= 1
+        return {"status": "completed", "job_id": job_id}
+
+    monkeypatch.setattr(service, "run_task", faux_run_task)
+    monkeypatch.setattr(tasks.registry, "vram_total_gb", lambda: 24.0)
+    registry._cartes_cache = ["cuda:0", "cuda:1", "cuda:2"]
+
+    out = service.process_lot(_lot(8), "lot-8")
+    assert out["reussis"] == 8
+    assert croisement["max"] == 8, f"seulement {croisement['max']} sous-jobs ensemble"
+

@@ -119,8 +119,21 @@ def _pool(cle: tuple[str, str], max_instances: int) -> _Pool:
 
 
 def _par_carte(max_total: int) -> int:
-    """La place d'UNE carte, a partir de la capacite totale du conteneur."""
-    return max(1, int(max_total) // len(devices()))
+    """La place d'UNE carte, a partir de la capacite totale du conteneur.
+
+    ARRONDI AU-DESSUS, et c'est important : une division entiere perd des places des
+    que le total ne tombe pas juste. Mesure du 2026-09-12 sur RunPod, un lot de 8 sur
+    un worker a 3 cartes : 8 // 3 = 2 par carte, donc 6 instances pour 8 sous-jobs —
+    deux ont attendu, et le lot a pris 143 s au lieu des 85 s observees sur un worker
+    a 4 cartes. Avec l'arrondi au-dessus on obtient 3, 3 et 2, et les huit partent
+    ensemble.
+
+    Sans risque pour la memoire : `max_total` vaut deja au plus (place d'une carte) x
+    (nombre de cartes), donc l'arrondi au-dessus ne peut pas depasser la place d'une
+    carte.
+    """
+    n = len(devices())
+    return max(1, -(-int(max_total) // n))
 
 
 @contextmanager

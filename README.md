@@ -135,6 +135,58 @@ refusé (vécu le 2026-09-12, conteneur en boucle de redémarrage).
 
 À écarter quelle que soit leur mémoire ou leur prix : **V100, P100, P40** et tout ce qui précède Turing.
 
+## Prise : le worker va CHERCHER son travail
+
+On demande quatre cartes à RunPod et on en reçoit parfois trois — leur propre contrôle
+de démarrage le dit (`GPU binary test passed: 3 GPU(s) healthy`, mesuré le 2026-09-12
+alors que l'endpoint est réglé sur 4). Le serveur ne peut donc pas savoir combien de
+jobs envoyer. Le worker, lui, sait : il compte ses cartes.
+
+On ne lui passe qu'une chose au lancement, une URL **signée** — elle porte son
+autorisation, le worker n'a aucun secret à connaître :
+
+```json
+{"claim_url": "https://api.dubbingspark.com/api/internal/gpu-claim?sig=…",
+ "budget_s": 420, "jobs_par_carte": 2}
+```
+
+Il demande, exécute, et renvoie ses résultats AVEC la demande suivante :
+
+```json
+→ {"worker": "…", "cartes": ["cuda:0","cuda:1","cuda:2"], "capacite": 6,
+   "gpu_name": "…", "vague": 2, "restant_s": 310.4, "resultats": [ … ]}
+← {"jobs": [ {"task": "instrumental", "audio_url": "…", "output_url": "…"}, … ]}
+```
+
+Le serveur rend au plus `capacite` jobs. Deux règles tiennent tout le reste :
+
+**Prise vide, le worker sort.** Il ne sonde jamais en attendant du travail — un worker
+qui attend est facturé à la milliseconde, cartes comprises. Un redémarrage sur une
+machine qui a déjà l'image coûte une vingtaine de secondes ; attendre coûte plus cher.
+
+**Il s'arrête avant son budget.** `budget_s` (défaut 420 s) reste très en dessous des
+coupures des hébergeurs — 600 s chez RunPod, 900 s chez Modal. Un worker coupé en
+pleine vague perd tout son travail, donc il rend la main de lui-même : il ne redemande
+que s'il a le temps d'une vague de plus, estimé sur la précédente.
+
+Le dernier envoi porte `"fin": true` : il ne sert que si la boucle s'arrête d'elle-même
+(budget, serveur muet), car il n'y a alors plus de demande suivante où glisser les
+résultats. Sans lui, le serveur garderait les réservations jusqu'à expiration.
+
+## Avancement, lisible du dehors
+
+Pendant qu'un lot tourne, l'image publie l'état DU LOT et pas seulement d'un sous-job :
+
+```json
+{"lot": "…", "total": 8, "faits": 3, "restants": 5, "places": 6,
+ "percent": 38, "ecoule_s": 41.2, "restant_s": 27.5, "message": "lot : 3/8 sous-job(s)"}
+```
+
+L'estimation raisonne en VAGUES, pas en jobs : `places` sous-jobs tournent de front,
+donc ce qui reste est un nombre de vagues entières. Le chemin de sortie existe déjà —
+`progress_update` chez RunPod (lisible par `/status`), le heartbeat vers `gpu-event`
+chez Modal et Vast.
+
 ## Lot : plusieurs sous-jobs dans UNE requête
 
 La plateforme n'a que 80 places simultanées chez ses hébergeurs, et un job y occupait
