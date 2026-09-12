@@ -91,14 +91,19 @@ def test_jobs_deduits_de_la_carte():
     sys.path.insert(0, str(_P(__file__).resolve().parents[1] / "src"))
     from spark_infer.tasks import jobs_pour_vram
 
-    # L4 de 22,5 Go : le plafond utile borne la conversion vocale (la mémoire en
-    # laisserait passer dix) ; la séparation est bornée par la mémoire, 4,8 Go par job.
-    assert jobs_pour_vram("chatterbox_vc", 22.5) == 4
-    assert jobs_pour_vram("bs_roformer_leap_xe", 22.5) == 3
-    # A100 80 Go : le plafond utile s'applique, la mémoire n'est plus la contrainte.
-    assert jobs_pour_vram("chatterbox_vc", 80.0) == 4
-    assert jobs_pour_vram("bs_roformer_leap_xe", 80.0) == 4
-    # 12 Go : deux séparations tiennent (9,7 Go mesurés à deux).
+    # Carte de 24 Go : CALÉ SUR LA MESURE du L4 de Modal (2026-09-12), la seule où le
+    # plafond a été cherché pour les deux tâches — 5 séparations tiennent (18,71 Go sur
+    # 23,66), la 6e déborde ; 8 conversions vocales tiennent (17,29 Go) sans être poussées.
+    assert jobs_pour_vram("bs_roformer_leap_xe", 24.0) == 5
+    assert jobs_pour_vram("chatterbox_vc", 24.0) == 9
+    # Le même calcul sur 22,5 Go reste prudent d'un cran, comme il doit l'être.
+    assert jobs_pour_vram("bs_roformer_leap_xe", 22.5) == 4
+    assert jobs_pour_vram("chatterbox_vc", 22.5) == 8
+    # Grosse carte : la mémoire décide, PLUS AUCUN plafond arbitraire. Une carte de
+    # 80 Go ne doit pas être bridée comme une de 24 (décision du propriétaire).
+    assert jobs_pour_vram("bs_roformer_leap_xe", 80.0) == 17
+    assert jobs_pour_vram("chatterbox_vc", 80.0) == 32
+    # 12 Go : deux séparations tiennent (9,4 Go mesurés à deux).
     assert jobs_pour_vram("bs_roformer_leap_xe", 12.0) == 2
     # Carte trop petite pour deux : jamais moins d'un job, même si le calcul dit zéro.
     assert jobs_pour_vram("bs_roformer_leap_xe", 6.0) == 1
@@ -108,14 +113,14 @@ def test_jobs_deduits_de_la_carte():
     assert jobs_pour_vram("chatterbox_vc", 5.0) == 1
     # Tâche inconnue : traitée en gourmande (12 + 6 Go), un job de moins vaut mieux qu'un OOM.
     assert jobs_pour_vram("inconnue", 24.0) == 1
-    assert jobs_pour_vram("inconnue", 80.0) == 4
+    assert jobs_pour_vram("inconnue", 80.0) == 9
     # Sans carte, ou carte illisible : un seul job.
     assert jobs_pour_vram("chatterbox_vc", None) == 1
     assert jobs_pour_vram("chatterbox_vc", 0) == 1
     # `SPARK_JOBS_PER_GPU` force la valeur (mesure, incident, carte exotique).
     assert jobs_pour_vram("bs_roformer_leap_xe", 22.5, force="8") == 8
     assert jobs_pour_vram("chatterbox_vc", 80.0, force="1") == 1
-    assert jobs_pour_vram("chatterbox_vc", 80.0, force="pas un nombre") == 4
+    assert jobs_pour_vram("chatterbox_vc", 80.0, force="pas un nombre") == 32
     # Plafond explicite (timeout de l'hébergeur, prudence).
     assert jobs_pour_vram("chatterbox_vc", 80.0, plafond=2) == 2
 
@@ -143,8 +148,8 @@ def test_deduction_opt_in_modal_et_runpod_inchanges(monkeypatch):
 
     # Image Vast.ai : le drapeau est posé, la carte décide.
     monkeypatch.setenv("SPARK_JOBS_AUTO", "1")
-    assert tasks.jobs_per_gpu("chatterbox_vc") == 4
-    assert tasks.jobs_per_gpu("bs_roformer_leap_xe") == 4
+    assert tasks.jobs_per_gpu("chatterbox_vc") == 32
+    assert tasks.jobs_per_gpu("bs_roformer_leap_xe") == 17
 
     # Une valeur explicite force, drapeau ou pas — et sans interroger la carte.
     monkeypatch.delenv("SPARK_JOBS_AUTO", raising=False)

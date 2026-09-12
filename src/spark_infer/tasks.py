@@ -79,9 +79,12 @@ class Timer:
 #   séparation, A100 PCIE 40 Go                     : 5,0 / 9,7 / 14,1
 # La conversion vocale à un seul job est surévaluée (elle hérite du pic du job
 # d'échauffement) : le modèle est calé sur le haut des vagues, qui est fiable.
+# RECALE le 2026-09-12 au soir sur le L4 de Modal, seule carte ou le plafond a ete
+# cherche pour les DEUX taches : separation 4,65 / 18,71 / 18,71 Go a 1, 4 et 5 jobs
+# (la 6e deborde) ; conversion vocale 7,25 / 10,29 / 12,83 / 17,29 Go a 1, 4, 6 et 8.
 COUT_MEMOIRE_GB = {
-    "chatterbox_vc": (5.0, 1.3),
-    "bs_roformer_leap_xe": (0.6, 4.8),
+    "chatterbox_vc": (5.0, 1.6),
+    "bs_roformer_leap_xe": (0.6, 3.9),
 }
 # Une tâche inconnue est traitée en gourmande : mieux vaut un job de moins qu'un OOM.
 COUT_INCONNU_GB = (12.0, 6.0)
@@ -89,14 +92,19 @@ COUT_INCONNU_GB = (12.0, 6.0)
 # et un chunk plus long que celui du banc. Un OOM coûte tout le job, un job de moins
 # ne coûte que du débit.
 MARGE = 0.85
-# Plafond par défaut. Monter au-delà n'accélère personne : CHAQUE job s'allonge à
-# proportion. Mesuré avec les fichiers de production — une conversion vocale passe de
-# 27 s seule à 95 s quand elles sont quatre, pour ×1,13 de débit ; une séparation de
-# 24 s à 41 s à trois, pour ×1,78. Le risque de monter est le timeout de l'hébergeur
-# (900 s chez Modal), qui tombe sur un job qui aurait réussi seul. Ce qu'on gagne en
-# montant, ce n'est donc pas de la vitesse : c'est le nombre de jobs qu'UNE machine
-# absorbe, donc des places — et c'est bien ça qui manque (80 places simultanées).
-PLAFOND_DEFAUT = 4
+# Plafond par défaut : un garde-fou, PAS un réglage. C'est la MÉMOIRE qui décide.
+#
+# Il valait 4 jusqu'au 2026-09-12, pour protéger le temps d'un job. Le propriétaire a
+# tranché l'inverse : ce qu'il veut, c'est le maximum de jobs que la carte permet — un
+# gros bloc n'achète pas de la vitesse, il achète des places, et les places sont la
+# ressource rare. Un plafond de 4 bridait d'ailleurs une carte de 80 Go exactement
+# comme une de 24, ce qui n'a aucun sens.
+#
+# Ce qui reste vrai et qu'il faut garder en tête : chaque job s'allonge à proportion du
+# nombre de jobs. Une séparation seule prend 56 s sur un L4, 210 s quand elles sont
+# cinq. Si un hébergeur coupe un job trop long (900 s chez Modal), c'est à LUI de
+# baisser le plafond par `SPARK_JOBS_MAX`, pas à la table de le faire pour tout le monde.
+PLAFOND_DEFAUT = 32
 
 
 def jobs_pour_vram(modele: str, vram_gb: float | None, force: str | None = None,
