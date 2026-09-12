@@ -32,22 +32,37 @@ Détails du contrat : [README.md](README.md).
 - **Vast.ai : image À PART, cœur COMMUN** (2026-09-12). `Dockerfile.vast` part de l'image de production et
   n'ajoute que `src` (le cœur à jour) et `vast_worker.py` ; Modal et RunPod gardent leur image, inchangée tant
   qu'on ne la rebâtit pas. NE PAS toucher à `modal_app.py` ni `handler.py` : ils marchent, c'est la consigne.
-- **Un pod Vast.ai fait tourner PLUSIEURS jobs à la fois** (`SPARK_JOBS_PER_GPU`, défaut 1) — il se loue à
+- **Le nombre de jobs se DÉDUIT de la carte et de la tâche** (`tasks.jobs_pour_vram`), activé par
+  `SPARK_JOBS_AUTO` que SEUL `Dockerfile.vast` pose : `tasks.py` est partagé, et ni Modal ni RunPod ne posent
+  `SPARK_JOBS_PER_GPU` — sans ce garde-fou ils passeraient de 1 à 4 jobs sans que personne l'ait demandé.
+  Mesuré : ~4 Go par séparation (5 jobs sur 24 Go, 25 sur 102 Go), et la conversion vocale ne remplit
+  JAMAIS la carte. Détail complet : [docs/ETUDE_CAPACITE_GPU.md](docs/ETUDE_CAPACITE_GPU.md).
+- **TOUTES les cartes de la machine sont utilisées** (2026-09-12) : pools indexés par `(modèle, carte)`,
+  carte du job dans une variable de fil, capacité = somme des cartes. Avant, `device()` rendait « cuda » que
+  PyTorch résout en `cuda:0` — une machine à deux RTX 3090 n'en utilisait qu'une, mesuré. Vast loue jusqu'à
+  12 cartes par machine ; deux cartes donnent ×2,31 de débit, là où empiler sur UNE ne donne que ×1,1.
+- **Un pod Vast.ai fait tourner PLUSIEURS jobs à la fois** — il se loue à
   l'heure, carte entière, donc on ne le rentabilise qu'en le remplissant. D'où le POOL d'instances
   (`registry.lease`) : sans lui, deux conversions vocales se volent leur voix de référence (chaque job écrit sa
   config et sa référence DANS le modèle, `vc_engine._configure` / `_set_reference`) — corruption silencieuse, pas
   un plantage. Le temps conteneur est réparti entre les jobs qui se croisent (`container_clock`), sinon un
   conteneur à trois jobs se ferait facturer trois fois son temps.
-- **Vast.ai loue de tout : la carte est vérifiée AU DÉMARRAGE** (`vast_worker.verifier_carte`) — CUDA initialisable,
-  architecture présente dans `torch.cuda.get_arch_list()`, mémoire ≥ `SPARK_MIN_VRAM_GB`, plus un vrai petit calcul.
+- **Vast.ai loue de tout : TOUTES les cartes sont vérifiées AU DÉMARRAGE** (`vast_worker.verifier_carte`) — CUDA
+  initialisable, architecture présente dans `torch.cuda.get_arch_list()`, mémoire ≥ `SPARK_MIN_VRAM_GB`, plus un vrai
+  petit calcul sur CHACUNE. Celles qui passent sont gardées, les autres écartées avec la raison : rien ne garantit
+  qu'une machine louée ait des cartes identiques, ni toutes libres.
   Un pod se paie dès qu'il démarre : échouer vite et clairement vaut mieux que découvrir « no kernel image » au
   premier job — et un conteneur qui sort en erreur est RELANCÉ en boucle par Vast.ai, donc facturé.
 - **CAPACITÉ DE CALCUL >= 7.5, et c'est la carte qui compte, pas le pilote.** torch 2.7.1+cu128 est compilé pour
   `['sm_75','sm_80','sm_86','sm_90','sm_100','sm_120','compute_120']` (relevé sur un pod le 2026-09-12) : un V100
   32 Go à 0,041 $/h sur pilote CUDA 13.0 a été REFUSÉ, `cuda_max_good` élevé ou pas. À louer : T4, RTX 20xx/30xx/40xx,
   A10, A100, A6000, L40S, H100 ; jamais V100, P100, P40.
-- **Combien de jobs en parallèle : ça se MESURE** (`scripts/bench_concurrence.py`, vagues de 1, 2, 4…). Un gain de
-  débit proche de ×1 = carte déjà saturée, le parallélisme ne fait que coûter de la mémoire.
+- **Combien de jobs en parallèle : le banc CHERCHE le plafond** (`scripts/bench_concurrence.py`) — il monte jusqu'à
+  l'échec, resserre par dichotomie, rapporte le dernier palier tenu ENTIÈREMENT. Aucun palier choisi à la main.
+  PIÈGES qui ont produit des chiffres faux et se reproduiront : deux tâches sur le même pod ne se mesurent pas
+  (l'allocateur ne rend rien, la seconde relève la somme) ; un MP3 n'est pas l'entrée de la production (il masque
+  le téléchargement, donc le gain du parallélisme) ; une connexion HTTP tenue pendant un job se fait couper
+  au-delà de ~200 s. Les cinq pièges sont dans [docs/ETUDE_CAPACITE_GPU.md](docs/ETUDE_CAPACITE_GPU.md).
 - **Chaque job rapporte son PIC de mémoire GPU** (`gpu_mem.allocated_gb` / `reserved_gb`, `gpu_mem_total_gb` —
   `registry.reset_peak_memory()` au début, `peak_memory_gb()` à la fin). C'est `reserved` qui dit si un GPU suffit ;
   avant le 2026-09-12 on ne connaissait la consommation que par l'OOM du 2026-09-11 (VC 179 s = plus de 22,5 Go).

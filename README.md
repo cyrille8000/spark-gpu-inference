@@ -87,7 +87,11 @@ Un seul tirage par job (décision du 2026-09-09) : pas de best-of-N, donc ni sco
 
 ## Vast.ai (image à part, cœur commun)
 
-Un pod se loue à l'heure, carte entière : on le remplit au lieu de lui donner un job à la fois.
+Un pod se loue à l'heure, machine entière : on le remplit au lieu de lui donner un job à la fois.
+Combien de jobs il encaisse, la mémoire de chaque tâche, les critères de location et les pièges de
+mesure : **[docs/ETUDE_CAPACITE_GPU.md](docs/ETUDE_CAPACITE_GPU.md)** (mesures du 2026-09-12).
+En bref : ~4 Go par séparation, donc 5 jobs sur 24 Go et 25 sur 102 Go ; la conversion vocale ne
+remplit jamais la carte ; toutes les cartes de la machine sont utilisées.
 
 ```bash
 # construire (quelques secondes : deux couches par-dessus l'image de production)
@@ -96,19 +100,26 @@ docker build -f Dockerfile.vast -t spark-gpu-vast:dev .
 # lancer sur le pod
 docker run --gpus all -p 8000:8000   -e SPARK_WORKER_TOKEN=… -e SPARK_JOBS_PER_GPU=4 -e SPARK_MIN_VRAM_GB=24   ghcr.io/cyrille8000/spark-gpu-inference-vast:sha-xxxxxxx
 
-# mesurer ce que la carte encaisse
-python scripts/bench_concurrence.py --url http://<ip>:<port> --token … --job banc_vc.json --vagues 1,2,4
+# mesurer ce que la carte encaisse — le banc CHERCHE le plafond, il n'est pas donné
+python scripts/bench_concurrence.py --url http://<ip>:<port> --token … --job banc_instrumental.json
 ```
 
 | Variable | Défaut | Rôle |
 |---|---|---|
 | `SPARK_WORKER_TOKEN` | — | OBLIGATOIRE : un pod est sur l'Internet public |
-| `SPARK_JOBS_PER_GPU` | 1 | jobs simultanés = taille des pools de modèles |
+| `SPARK_JOBS_PER_GPU` | — | force le nombre de jobs simultanés ; vide = la carte décide |
+| `SPARK_JOBS_AUTO` | 1 dans l'image Vast | déduire le nombre de jobs de la carte et de la tâche |
+| `SPARK_JOBS_MAX` | 4 | plafond de la déduction |
 | `SPARK_MIN_VRAM_GB` | 24 | refus au démarrage sous ce seuil |
 | `SPARK_IDLE_EXIT_S` | 900 | arrêt après ce temps sans job (0 = jamais) |
 
-`POST /run` (synchrone), `POST /submit` (rappel `callback_url`, comme Modal et RunPod), `GET /status`,
-`GET /health`, `POST /shutdown`. Le worker refuse de démarrer si la carte ne peut pas exécuter l'image.
+`POST /run` (synchrone), `POST /submit` (rappel `callback_url`, comme Modal et RunPod),
+`GET /result?job_id=` (relire un job soumis : 202 tant qu'il tourne, 200 ensuite), `GET /status`,
+`GET /health`, `POST /shutdown`. Le worker vérifie TOUTES les cartes au démarrage et refuse de
+démarrer si aucune ne peut exécuter l'image.
+
+NE JAMAIS tenir une connexion ouverte pendant un job : au-delà d'environ 200 s de silence elle est
+coupée (mesuré, des jobs perdus qu'on attribuait à tort à la carte). `/submit` puis `/result`.
 
 **Quelles cartes louer.** Ces roues (torch 2.7.1+cu128) exigent une capacité de calcul **>= 7.5**, et c'est la
 carte qui compte, pas la version CUDA de son pilote : un V100 sur pilote CUDA 13.0 reste en capacité 7.0, donc
