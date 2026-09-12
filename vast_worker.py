@@ -231,7 +231,11 @@ def etat_worker() -> dict:
         "vram_total_gb": registry.vram_total_gb(),
         "vram": memoire_carte(),
         "cuda": _cuda_info(),
-        "jobs_per_gpu": jobs_per_gpu(),
+        # Déduit de la carte trouvée, par tâche : une conversion vocale coûte bien
+        # moins de mémoire qu'une séparation, donc la même carte en tient plus.
+        "jobs_per_gpu": jobs_per_gpu("chatterbox_vc"),
+        "jobs_par_tache": {"vc": jobs_per_gpu("chatterbox_vc"),
+                           "instrumental": jobs_per_gpu("bs_roformer_leap_xe")},
         "jobs_actifs": ETAT.actifs,
         "jobs_faits": ETAT.faits,
         "pools": registry.pool_state(),
@@ -355,8 +359,10 @@ def main() -> None:
     serveur = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     serveur.daemon_threads = True
     threading.Thread(target=surveiller_inactivite, args=(serveur,), daemon=True).start()
-    log.info("worker prêt sur :%d — %s (%s), %s Go, %d job(s) en parallèle, arrêt après %d s d'inactivité",
-             port, carte["gpu_name"], carte["sm"], carte["vram_total_gb"], jobs_per_gpu(), idle_exit_s())
+    log.info("worker prêt sur :%d — %s (%s), %s Go, %d conversion(s) vocale(s) ou %d séparation(s) "
+             "en parallèle, arrêt après %d s d'inactivité", port, carte["gpu_name"], carte["sm"],
+             carte["vram_total_gb"], jobs_per_gpu("chatterbox_vc"), jobs_per_gpu("bs_roformer_leap_xe"),
+             idle_exit_s())
     serveur.serve_forever()
 
 

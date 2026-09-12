@@ -81,3 +81,72 @@ def test_vc_cuts_s():
             parse_vc({"source_url": URL, "ref_urls": [URL], "cuts_s": mauvais})
     with pytest.raises(InputError):
         parse_vc({"source_url": URL, "ref_urls": [URL], "cuts_s": [1.0] * 10_001})
+
+def test_jobs_deduits_de_la_carte():
+    """Le nombre de jobs suit la CARTE TROUVÉE et la TÂCHE, pas une constante posée au
+    déploiement : Modal ne propose qu'un L4 aujourd'hui, RunPod donne ce qu'il a, Vast.ai
+    tout. Coûts mesurés le 2026-09-12 (A100 80 Go, RTX PRO 4000 25 Go)."""
+    import sys
+    from pathlib import Path as _P
+    sys.path.insert(0, str(_P(__file__).resolve().parents[1] / "src"))
+    from spark_infer.tasks import jobs_pour_vram
+
+    # L4 de 22,5 Go : le plafond utile borne la conversion vocale (la mémoire en
+    # laisserait passer dix) ; la séparation est bornée par la mémoire, 4,8 Go par job.
+    assert jobs_pour_vram("chatterbox_vc", 22.5) == 4
+    assert jobs_pour_vram("bs_roformer_leap_xe", 22.5) == 3
+    # A100 80 Go : le plafond utile s'applique, la mémoire n'est plus la contrainte.
+    assert jobs_pour_vram("chatterbox_vc", 80.0) == 4
+    assert jobs_pour_vram("bs_roformer_leap_xe", 80.0) == 4
+    # 12 Go : deux séparations tiennent (9,7 Go mesurés à deux).
+    assert jobs_pour_vram("bs_roformer_leap_xe", 12.0) == 2
+    # Carte trop petite pour deux : jamais moins d'un job, même si le calcul dit zéro.
+    assert jobs_pour_vram("bs_roformer_leap_xe", 6.0) == 1
+    # 8 Go : une seule conversion vocale — la part fixe (5 Go) mange la carte. Une carte
+    # aussi petite est de toute façon écartée en amont par `SPARK_MIN_VRAM_GB`.
+    assert jobs_pour_vram("chatterbox_vc", 8.0) == 1
+    assert jobs_pour_vram("chatterbox_vc", 5.0) == 1
+    # Tâche inconnue : traitée en gourmande (12 + 6 Go), un job de moins vaut mieux qu'un OOM.
+    assert jobs_pour_vram("inconnue", 24.0) == 1
+    assert jobs_pour_vram("inconnue", 80.0) == 4
+    # Sans carte, ou carte illisible : un seul job.
+    assert jobs_pour_vram("chatterbox_vc", None) == 1
+    assert jobs_pour_vram("chatterbox_vc", 0) == 1
+    # `SPARK_JOBS_PER_GPU` force la valeur (mesure, incident, carte exotique).
+    assert jobs_pour_vram("bs_roformer_leap_xe", 22.5, force="8") == 8
+    assert jobs_pour_vram("chatterbox_vc", 80.0, force="1") == 1
+    assert jobs_pour_vram("chatterbox_vc", 80.0, force="pas un nombre") == 4
+    # Plafond explicite (timeout de l'hébergeur, prudence).
+    assert jobs_pour_vram("chatterbox_vc", 80.0, plafond=2) == 2
+
+
+def test_deduction_opt_in_modal_et_runpod_inchanges(monkeypatch):
+    """La déduction ne s'active QUE si `SPARK_JOBS_AUTO` est posé.
+
+    Ce fichier est partagé par les trois hébergeurs. Modal et RunPod tournent à un
+    job par conteneur et marchent bien ainsi ; ni l'un ni l'autre ne pose
+    `SPARK_JOBS_PER_GPU`, donc une déduction active par défaut les ferait passer à
+    quatre sans que personne l'ait demandé. Seule l'image Vast.ai pose le drapeau.
+    """
+    import sys
+    from pathlib import Path as _P
+    sys.path.insert(0, str(_P(__file__).resolve().parents[1] / "src"))
+    from spark_infer import tasks
+
+    monkeypatch.setattr(tasks.registry, "vram_total_gb", lambda: 80.0)
+    monkeypatch.delenv("SPARK_JOBS_PER_GPU", raising=False)
+
+    # Modal / RunPod : aucun des deux drapeaux — un job, comme aujourd'hui.
+    monkeypatch.delenv("SPARK_JOBS_AUTO", raising=False)
+    assert tasks.jobs_per_gpu("chatterbox_vc") == 1
+    assert tasks.jobs_per_gpu("bs_roformer_leap_xe") == 1
+
+    # Image Vast.ai : le drapeau est posé, la carte décide.
+    monkeypatch.setenv("SPARK_JOBS_AUTO", "1")
+    assert tasks.jobs_per_gpu("chatterbox_vc") == 4
+    assert tasks.jobs_per_gpu("bs_roformer_leap_xe") == 4
+
+    # Une valeur explicite force, drapeau ou pas — et sans interroger la carte.
+    monkeypatch.delenv("SPARK_JOBS_AUTO", raising=False)
+    monkeypatch.setenv("SPARK_JOBS_PER_GPU", "3")
+    assert tasks.jobs_per_gpu("bs_roformer_leap_xe") == 3

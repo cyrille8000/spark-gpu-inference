@@ -58,17 +58,101 @@ class Timer:
         return round(time.monotonic() - self.t0, 3)
 
 
-def jobs_per_gpu() -> int:
-    """Jobs qu'un conteneur fait tourner EN MÊME TEMPS sur sa carte (`SPARK_JOBS_PER_GPU`,
-    défaut 1). C'est aussi la taille de chaque pool de modèles : au-delà, un job attend
-    une instance libre. À monter seulement d'après la mesure `gpu_mem` d'un vrai job —
-    chaque instance coûte ses poids, et le débit ne suit pas forcément (le GPU peut
-    déjà être saturé en calcul)."""
-    try:
-        n = int(os.environ.get("SPARK_JOBS_PER_GPU", "1"))
-    except ValueError:
+# Coût mémoire d'une tâche : une part fixe — contexte CUDA, espaces de travail cuDNN,
+# premier exemplaire du modèle — puis un coût par job supplémentaire.
+#
+# MESURÉ le 2026-09-12 avec les fichiers de la PRODUCTION (WAV, pas MP3 : le chunk de
+# conversion vocale est un WAV 24 kHz mono de 120 s, 5,8 Mo ; l'entrée de séparation
+# une tranche du WAV source, mono 16 bits à la fréquence d'origine, 150 s, 13 Mo) et
+# UNE SEULE TÂCHE PAR POD. Ces deux points comptent :
+#
+#   — deux tâches sur le même pod NE SE MESURENT PAS. L'allocateur de PyTorch ne rend
+#     jamais ce qu'il a réservé, donc la seconde tâche relève la somme des deux. C'est
+#     ce qui m'avait fait annoncer 13 à 17 Go pour UNE séparation, et croire que le
+#     coût dépendait de la carte : c'était le pool de conversion vocale resté en place.
+#     Le chiffre vrai est 5 Go, sur toutes les cartes.
+#   — un MP3 de 1,2 Mo masque le téléchargement, donc le temps où le GPU dort. Avec le
+#     vrai WAV, le parallélisme rend ×1,78 à trois séparations au lieu de ×1,11.
+#
+# Relevés bruts (Go réservés, vagues de 1/2/3/4 jobs) :
+#   conversion vocale, RTX PRO 4000 Blackwell 25 Go : 6,9 / 7,4 / 8,3 / 9,7
+#   séparation, A100 PCIE 40 Go                     : 5,0 / 9,7 / 14,1
+# La conversion vocale à un seul job est surévaluée (elle hérite du pic du job
+# d'échauffement) : le modèle est calé sur le haut des vagues, qui est fiable.
+COUT_MEMOIRE_GB = {
+    "chatterbox_vc": (5.0, 1.3),
+    "bs_roformer_leap_xe": (0.6, 4.8),
+}
+# Une tâche inconnue est traitée en gourmande : mieux vaut un job de moins qu'un OOM.
+COUT_INCONNU_GB = (12.0, 6.0)
+# Part de la carte qu'on ne promet JAMAIS : fragmentation de l'allocateur, pilote,
+# et un chunk plus long que celui du banc. Un OOM coûte tout le job, un job de moins
+# ne coûte que du débit.
+MARGE = 0.85
+# Plafond par défaut. Monter au-delà n'accélère personne : CHAQUE job s'allonge à
+# proportion. Mesuré avec les fichiers de production — une conversion vocale passe de
+# 27 s seule à 95 s quand elles sont quatre, pour ×1,13 de débit ; une séparation de
+# 24 s à 41 s à trois, pour ×1,78. Le risque de monter est le timeout de l'hébergeur
+# (900 s chez Modal), qui tombe sur un job qui aurait réussi seul. Ce qu'on gagne en
+# montant, ce n'est donc pas de la vitesse : c'est le nombre de jobs qu'UNE machine
+# absorbe, donc des places — et c'est bien ça qui manque (80 places simultanées).
+PLAFOND_DEFAUT = 4
+
+
+def jobs_pour_vram(modele: str, vram_gb: float | None, force: str | None = None,
+                   plafond: int = PLAFOND_DEFAUT) -> int:
+    """Combien de jobs de CETTE tâche cette carte peut tenir en même temps.
+
+    `force` l'emporte quand il est posé (mesure, incident, carte exotique) ; sinon la
+    valeur se déduit de la mémoire réellement trouvée. Le calcul est par TÂCHE, parce
+    que les deux ne coûtent pas la même chose : sur un L4 de 22 Go, quatre conversions
+    vocales tiennent (9,7 Go mesurés à quatre) contre trois séparations (14,1 Go).
+    Pur, testable sans GPU.
+    """
+    if force:
+        try:
+            return max(1, min(32, int(force)))
+        except ValueError:
+            pass
+    if not vram_gb or vram_gb <= 0:
         return 1
-    return max(1, min(32, n))
+    base, par_job = COUT_MEMOIRE_GB.get(modele, COUT_INCONNU_GB)
+    reste = vram_gb * MARGE - base
+    if reste < par_job:
+        return 1
+    return max(1, min(plafond, int(reste // par_job)))
+
+
+def _auto_actif() -> bool:
+    """La déduction d'après la carte est OPT-IN, et c'est volontaire.
+
+    Ce fichier est partagé par les trois hébergeurs. Modal et RunPod tournent
+    aujourd'hui à UN job par conteneur parce qu'aucun des deux ne pose
+    `SPARK_JOBS_PER_GPU` — une déduction active par défaut les ferait passer à
+    quatre sans que personne l'ait demandé, et ils marchent bien comme ils sont.
+    Seule l'image Vast.ai pose `SPARK_JOBS_AUTO` (Dockerfile.vast) : c'est elle
+    qui atterrit sur une carte inconnue à chaque location et qui a besoin de
+    s'adapter.
+    """
+    return os.environ.get("SPARK_JOBS_AUTO", "").strip().lower() in ("1", "true", "vrai", "oui", "yes", "on")
+
+
+def jobs_per_gpu(modele: str = "chatterbox_vc") -> int:
+    """Jobs simultanés pour une tâche, sur la carte de CE conteneur.
+
+    `SPARK_JOBS_PER_GPU` force la valeur partout. Sans lui : la carte décide si
+    `SPARK_JOBS_AUTO` est posé, sinon UN seul job — le comportement historique.
+    """
+    force = os.environ.get("SPARK_JOBS_PER_GPU")
+    if force:
+        return jobs_pour_vram(modele, None, force)
+    if not _auto_actif():
+        return 1
+    try:
+        plafond = int(os.environ.get("SPARK_JOBS_MAX", PLAFOND_DEFAUT))
+    except ValueError:
+        plafond = PLAFOND_DEFAUT
+    return jobs_pour_vram(modele, registry.vram_total_gb(), None, max(1, plafond))
 
 
 def run_task(inp: dict, job_id: str, progress: Progress) -> dict:
@@ -97,7 +181,7 @@ def run_task(inp: dict, job_id: str, progress: Progress) -> dict:
             "elapsed_s": timer.total(), "timings": timer.timings,
             "device": registry.device(), "gpu_name": registry.gpu_name(),
             "models_loaded": registry.loaded(), "pools": registry.pool_state(),
-            "jobs_per_gpu": jobs_per_gpu(),
+            "jobs_per_gpu": jobs_per_gpu("chatterbox_vc" if task == "vc" else "bs_roformer_leap_xe"),
             # Ce que le job a VRAIMENT demandé à la carte, et ce qu'elle offre.
             "gpu_mem": mem, "gpu_mem_total_gb": registry.vram_total_gb(),
         })
@@ -134,7 +218,7 @@ def _lease(name: str, factory: Callable[[], object], timer: Timer):
     donne (modèle, chargé_maintenant). L'attente d'une instance libre et le
     chargement sont chronométrés ensemble sous `model_load`."""
     with timer.step("model_load"):
-        bail = registry.lease(name, factory, jobs_per_gpu())
+        bail = registry.lease(name, factory, jobs_per_gpu(name))
         model, cold = bail.__enter__()
     try:
         yield model, cold
