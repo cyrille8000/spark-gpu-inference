@@ -86,6 +86,8 @@ def main() -> int:
     p.add_argument("--job", required=True, help="fichier JSON de la charge utile")
     p.add_argument("--vagues", default="1,2,4", help="largeurs à mesurer, ex. 1,2,4,8")
     p.add_argument("--timeout", type=float, default=1800.0)
+    p.add_argument("--sans-chauffe", action="store_true",
+                   help="ne pas jeter un premier job d'échauffement (mesure alors biaisée)")
     a = p.parse_args()
 
     charge = json.loads(open(a.job, encoding="utf-8").read())
@@ -98,6 +100,16 @@ def main() -> int:
           f"SPARK_JOBS_PER_GPU={capacite} · {etat.get('cuda', {}).get('torch')}+cu{etat.get('cuda', {}).get('compile_pour')}")
     print(f"tâche « {charge.get('task')} »\n")
 
+    # ÉCHAUFFEMENT, jeté. Le tout premier job d'un worker charge le modèle sur la
+    # carte (des dizaines de secondes) : sans ça la vague de 1 le paie et les vagues
+    # suivantes non, ce qui gonfle artificiellement le gain du parallélisme (constaté
+    # le 2026-09-12 : ×2,44 annoncé pour ×1,2 réel).
+    if not a.sans_chauffe:
+        t0 = time.monotonic()
+        r = un_job(a.url, a.token, charge, a.timeout)
+        print(f"échauffement (jeté) : {r['s']} s, dont {r.get('model_load_s')} s de chargement du modèle
+")
+
     lignes = []
     for n in [int(x) for x in a.vagues.split(",") if x.strip()]:
         if n > capacite:
@@ -106,7 +118,8 @@ def main() -> int:
         r = vague(a.url, a.token, charge, n, a.timeout)
         lignes.append(r)
         print(f"vague {r['jobs']:>2} : {r['reussis']}/{r['jobs']} réussis · mur {r['mur_s']:>6} s · "
-              f"par job {r['par_job_s']} s · débit {r['debit_par_min']}/min · pic carte {r['pic_carte_gb']} Go"
+              f"par job {r['par_job_s']} s · {r['mur_s'] / max(1, r['reussis']):.1f} s/job en file · "
+              f"débit {r['debit_par_min']}/min · pic carte {r['pic_carte_gb']} Go"
               + (f" · erreurs {r['erreurs']}" if r["erreurs"] else ""))
 
     ref = next((l for l in lignes if l["jobs"] == 1 and l["reussis"]), None)
