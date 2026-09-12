@@ -27,9 +27,13 @@ La plateforme dispose de 80 places GPU simultanées (6 comptes Modal × 10, plus
 était : peut-on louer des pods Vast.ai en débordement, et combien de jobs un
 pod peut-il absorber ?
 
-Contrainte posée par le propriétaire, à respecter : **Modal et RunPod ne se
-touchent pas.** `modal_app.py` et `handler.py` restent intacts, et leur image
-reste au tag publié.
+Contraintes posées par le propriétaire, dans l'ordre où elles sont venues.
+D'abord : **Modal et RunPod ne se touchent pas** — c'est ce qui a fait construire
+une image Vast.ai à part, `Dockerfile.vast`, par-dessus l'image de production.
+Puis, le 2026-09-12 au soir : **Modal reste figé** — un job par worker d'une
+carte, pas de concurrence, décision prise une fois su que le plan Starter plafonne
+à 10 cartes par compte. **RunPod, lui, reçoit la concurrence**, pour qu'on puisse
+y tester un worker à plusieurs cartes. `modal_app.py` reste donc intact.
 
 ---
 
@@ -55,6 +59,40 @@ Ces lignes sont des planchers, pas des plafonds.
 
 Temps d'un job seul : 11,5 s (PRO 6000), 13,8 s (PRO 6000), 22,0 s (3090 rapide),
 24,4 s (A100 PCIE), 26,9 s (PRO 4000), 94,2 s (3090 lente).
+
+### Le L4 de Modal — mesuré le 2026-09-12 sur Modal même
+
+Carte de 23,66 Go. Mesures faites sur une app Modal SÉPARÉE (`spark-gpu-bench`),
+`max_containers=1` pour garantir un seul conteneur, image de production
+`sha-a9ec11c`, `timeout` à 900 s comme en production.
+
+| Séparations | Mur | Par job | Mémoire | % carte | Débit |
+|---|---|---|---|---|---|
+| 1 | 56,4 s | 56,4 s | 4,65 Go | 20 % | ×1 |
+| 4 | 196,8 s | 188,2 s | 18,71 Go | 79 % | ×1,15 |
+| **5** | **246,2 s** | 209,6 s | 18,71 Go | 79 % | ×1,15 |
+| 6 | échec | — | 23,35 Go | OOM | — |
+
+| Conversions vocales | Mur | Par job | Mémoire | % carte | Débit |
+|---|---|---|---|---|---|
+| 1 | 41,0 s | 41,0 s | 7,25 Go | 31 % | ×1 |
+| 4 | 136,9 s | 114,8 s | 10,29 Go | 43 % | ×1,20 |
+| 6 | 204,0 s | 158,8 s | 12,83 Go | 54 % | ×1,21 |
+| **8** | 268,5 s | 216,1 s | 17,29 Go | 73 % | ×1,23 |
+
+Huit conversions tiennent sans peine ; le plafond n'a pas été cherché plus haut.
+Le délai de 900 s n'a jamais mordu : le job le plus long a pris 216 s.
+
+Le démarrage à froid d'un conteneur L4 coûte environ **une minute** (113 s pour le
+premier job contre 56 s ensuite). Un conteneur qui traite huit jobs ne la paie
+qu'une fois au lieu de huit.
+
+**Le plafond de Modal est en CARTES, pas en conteneurs.** Le plan Starter donne
+10 GPU simultanés par compte (et 100 conteneurs). Mettre plusieurs cartes dans un
+conteneur (`gpu="L4:4"`, supporté jusqu'à 8) n'augmente donc rien : ce sont les
+mêmes dix cartes. Le seul levier chez Modal est le nombre de jobs par carte.
+Chez RunPod au contraire, aucun plafond de compte n'est documenté et le nombre de
+cartes par worker se configure — les deux leviers y jouent.
 
 ### Changement de voix — WAV 24 kHz mono, 120 s, 1 extrait de 13 s
 
