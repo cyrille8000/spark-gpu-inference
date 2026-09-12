@@ -153,3 +153,43 @@ def test_des_sorties_distinctes_passent(monkeypatch):
     ]}
     assert service.process_lot(lot, "lot-6")["reussis"] == 2
 
+
+def test_deux_lots_de_suite_reutilisent_les_memes_exemplaires(monkeypatch):
+    """Un second lot sur la MEME machine ne doit ni recharger les modeles, ni melanger
+    quoi que ce soit.
+
+    Les exemplaires restent residents entre deux lots : c'est voulu, c'est ce qui
+    economise le chargement (17 a 50 s mesurees). Ce qui doit rester vrai malgre cette
+    reutilisation : dans un lot, deux sous-jobs n'ont JAMAIS le meme exemplaire — sans
+    quoi deux conversions vocales se voleraient leur voix de reference, en silence.
+    (`VoiceConverter.run` repose config et reference a chaque job, donc un exemplaire
+    reutilise est remis a neuf ; ce test garde le partage, pas la remise a neuf.)
+    """
+    charges = []
+    tenus_par_lot: list[list[int]] = []
+
+    def fabrique(carte):
+        charges.append(carte)
+        return object()
+
+    def faux_run_task(inp, job_id, progress):
+        with registry.lease("bs_roformer_leap_xe", fabrique, tasks.jobs_per_gpu("x")) as (inst, _):
+            time.sleep(0.1)
+            tenus_par_lot[-1].append(id(inst))
+        return {"status": "completed", "job_id": job_id}
+
+    monkeypatch.setattr(service, "run_task", faux_run_task)
+    monkeypatch.setattr(tasks.registry, "vram_total_gb", lambda: 24.0)
+
+    for _ in range(2):
+        tenus_par_lot.append([])
+        out = service.process_lot(_lot(5), "lot-suite")
+        assert out["reussis"] == 5
+
+    # Cinq exemplaires distincts DANS chaque lot : personne ne partage.
+    for tenus in tenus_par_lot:
+        assert len(set(tenus)) == 5, "deux sous-jobs ont partage un exemplaire"
+    # Et le second lot n'en a recharge aucun : ce sont les memes cinq.
+    assert len(charges) == 5, f"{len(charges)} chargements au lieu de 5 : le second lot a rechargé"
+    assert set(tenus_par_lot[0]) == set(tenus_par_lot[1])
+
