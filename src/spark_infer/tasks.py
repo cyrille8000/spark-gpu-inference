@@ -131,6 +131,26 @@ def jobs_pour_vram(modele: str, vram_gb: float | None, force: str | None = None,
     return max(1, min(plafond, int(reste // par_job)))
 
 
+# Places ouvertes pendant un LOT (`service.process_lot`). Un lot dit explicitement
+# combien de sous-jobs il veut voir tourner ensemble : la taille des pools de modeles
+# doit suivre, sinon les sous-jobs s'attendraient sur une seule instance et le lot ne
+# serait qu'une file deguisee. Un conteneur ne traite qu'UN lot a la fois, d'ou une
+# simple variable de module plutot qu'un reglage par fil.
+_PLACES_LOT: int | None = None
+
+
+@contextmanager
+def places_du_lot(n: int):
+    """Ouvre `n` places le temps d'un lot, puis remet l'etat d'avant."""
+    global _PLACES_LOT
+    ancien = _PLACES_LOT
+    _PLACES_LOT = max(1, int(n))
+    try:
+        yield _PLACES_LOT
+    finally:
+        _PLACES_LOT = ancien
+
+
 def _auto_actif() -> bool:
     """La déduction d'après la carte est OPT-IN, et c'est volontaire.
 
@@ -154,6 +174,8 @@ def jobs_per_gpu(modele: str = "chatterbox_vc") -> int:
     force = os.environ.get("SPARK_JOBS_PER_GPU")
     if force:
         return jobs_pour_vram(modele, None, force)
+    if _PLACES_LOT is not None:
+        return _PLACES_LOT
     if not _auto_actif():
         return 1
     try:
@@ -166,6 +188,24 @@ def jobs_per_gpu(modele: str = "chatterbox_vc") -> int:
     # deux, quatre, douze).
     par_carte = jobs_pour_vram(modele, registry.vram_total_gb(), None, max(1, plafond))
     return par_carte * max(1, len(registry.devices()))
+
+
+MODELE_DE_TACHE = {"vc": "chatterbox_vc", "instrumental": "bs_roformer_leap_xe"}
+
+
+def places_pour_taches(taches: list[str]) -> int:
+    """Combien de sous-jobs peuvent tourner ENSEMBLE sur cette machine.
+
+    Calcule sur la tache la PLUS GOURMANDE du lot : une separation coute ~3,9 Go par
+    job, une conversion vocale ~1,6 (mesures du 2026-09-12). Un lot melange se
+    dimensionne donc sur la separation, sinon il deborde. Multiplie par le nombre de
+    cartes : un job ne s'etale jamais sur deux GPU, mais deux jobs vont sur deux GPU.
+    """
+    force = os.environ.get("SPARK_JOBS_PER_GPU")
+    vram = registry.vram_total_gb()
+    noms = {MODELE_DE_TACHE.get(str(t), "inconnue") for t in taches} or {"inconnue"}
+    par_carte = min(jobs_pour_vram(n, vram, force, 32) for n in noms)
+    return max(1, par_carte * max(1, len(registry.devices())))
 
 
 def run_task(inp: dict, job_id: str, progress: Progress) -> dict:

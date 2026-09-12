@@ -135,6 +135,32 @@ refusé (vécu le 2026-09-12, conteneur en boucle de redémarrage).
 
 À écarter quelle que soit leur mémoire ou leur prix : **V100, P100, P40** et tout ce qui précède Turing.
 
+## Lot : plusieurs sous-jobs dans UNE requête
+
+La plateforme n'a que 80 places simultanées chez ses hébergeurs, et un job y occupait
+une place entière. Un lot de vingt n'en occupe qu'une.
+
+```json
+{"jobs": [
+  {"task": "instrumental", "audio_url": "…", "output_url": "…", "callback_url": "…"},
+  {"task": "instrumental", "audio_url": "…", "output_url": "…", "callback_url": "…"}
+]}
+```
+
+Chaque sous-job garde SES `callback_url` et `output_url` : la plateforme reçoit
+`started` / `heartbeat` / `finished` par sous-job comme avant. La réponse du lot n'est
+qu'un récapitulatif — `total`, `reussis`, `echecs`, `places`, `cartes`, et `resultats`
+avec une ligne par sous-job. Un sous-job qui échoue n'emporte pas les autres.
+
+Combien tournent EN MÊME TEMPS : déduit de la carte et de la tâche la plus gourmande
+du lot, multiplié par le nombre de cartes. Rien à régler chez l'hébergeur — pas de
+`concurrency_modifier`, pas de `@modal.concurrent`, pas de variable d'environnement :
+**c'est l'appelant qui choisit la taille du lot, sans reconstruire l'image**. Au plus
+256 sous-jobs. `SPARK_JOBS_PER_GPU` force encore la valeur si besoin.
+
+Repères mesurés (2026-09-12) : une carte de 24 Go tient 5 séparations ou 9 conversions
+vocales ; un worker RunPod à 4 cartes en tient 20 ou 36.
+
 ## Sortie
 
 ```json

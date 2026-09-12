@@ -10,13 +10,14 @@ import logging
 import os
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
 from . import registry
 from .container_clock import CLOCK
 from .io_utils import InputError
 from .params import parse_callback, parse_heartbeat_s, parse_meta
-from .tasks import run_task
+from .tasks import places_du_lot, places_pour_taches, run_task
 from .webhooks import Heartbeat, JobWebhooks, now_iso
 
 log = logging.getLogger("spark.service")
@@ -24,8 +25,74 @@ log = logging.getLogger("spark.service")
 Progress = Callable[[dict], None]
 
 
+# Un lot plus gros que ça est refusé : ce n'est plus un lot, c'est une file.
+MAX_SOUS_JOBS = 256
+
+
+def process_lot(inp: dict, job_id: str, progress: Progress | None = None) -> dict:
+    """Un LOT : une seule requête qui porte plusieurs sous-jobs, exécutés ensemble ici.
+
+    C'est la réponse au vrai problème : la plateforme n'a que 80 places simultanées
+    chez ses hébergeurs, et un job y occupait une place entière. Un lot de vingt
+    séparations n'en occupe qu'UNE.
+
+    Pourquoi ici et pas dans un réglage d'hébergeur : `concurrency_modifier` chez
+    RunPod, `@modal.concurrent` chez Modal et les variables d'environnement qui vont
+    avec sont trois mécanismes différents à régler et à redéployer séparément. Le lot
+    est dans la charge utile : c'est l'appelant qui décide de sa taille, sans que
+    personne ne reconstruise l'image.
+
+    Chaque sous-job garde SES propres `callback_url` et `output_url` : la plateforme
+    reçoit `started` / `heartbeat` / `finished` par sous-job comme avant, et le
+    résultat du lot n'est qu'un récapitulatif. Un sous-job qui échoue n'emporte pas
+    les autres — son erreur typée est dans sa ligne, et l'appelant le rejoue.
+
+    Le nombre de sous-jobs qui tournent EN MÊME TEMPS vient de la carte et de la tâche
+    la plus gourmande (`places_pour_taches`) ; le reste attend son tour dans le lot.
+    """
+    sous = inp.get("jobs")
+    if not isinstance(sous, list) or not sous:
+        return {"status": "error", "code": "bad_input", "job_id": job_id,
+                "error": "`jobs` doit être une liste non vide de sous-jobs"}
+    if len(sous) > MAX_SOUS_JOBS:
+        return {"status": "error", "code": "bad_input", "job_id": job_id,
+                "error": f"lot de {len(sous)} sous-jobs : maximum {MAX_SOUS_JOBS}"}
+    if any(not isinstance(s, dict) for s in sous):
+        return {"status": "error", "code": "bad_input", "job_id": job_id,
+                "error": "chaque sous-job doit être un objet"}
+
+    places = min(len(sous), places_pour_taches([str(s.get("task") or "") for s in sous]))
+    t0 = time.monotonic()
+    log.info("[%s] LOT de %d sous-job(s), %d en parallèle sur %s", job_id, len(sous), places,
+             ", ".join(registry.devices()))
+
+    def un(i_et_job: tuple[int, dict]) -> dict:
+        i, s = i_et_job
+        return process_job(s, f"{job_id}-{i:03d}", progress)
+
+    # `max_workers` borne vraiment le parallélisme : le pool de modèles ne sert alors
+    # plus qu'à donner son exemplaire à chacun, pas à faire la file.
+    with places_du_lot(places), ThreadPoolExecutor(max_workers=places) as ex:
+        resultats = list(ex.map(un, enumerate(sous)))
+
+    reussis = sum(1 for r in resultats if r.get("status") == "completed")
+    return {
+        "status": "completed", "lot": True, "job_id": job_id,
+        "total": len(sous), "reussis": reussis, "echecs": len(sous) - reussis,
+        "places": places, "cartes": registry.devices(),
+        "gpu_name": registry.gpu_name(), "device": registry.device(),
+        "elapsed_s": round(time.monotonic() - t0, 3),
+        "provider": os.environ.get("SPARK_PROVIDER", ""),
+        "resultats": resultats,
+    }
+
+
 def process_job(inp: dict, job_id: str, progress: Progress | None = None) -> dict:
     """Exécute le job et renvoie le JSON de sortie (succès ou erreur typée). Ne lève jamais."""
+    # Un lot se reconnaît à sa clé `jobs` : aucun hébergeur n'a rien à savoir de plus,
+    # `handler.py` et `modal_app.py` restent inchangés.
+    if isinstance(inp.get("jobs"), list):
+        return process_lot(inp, job_id, progress)
     task = inp.get("task")
     log.info("[%s] job reçu task=%s", job_id, task)
     provider = os.environ.get("SPARK_PROVIDER", "")
