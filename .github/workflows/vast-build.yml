@@ -45,6 +45,15 @@ jobs:
       packages: write
 
     steps:
+      # L'image de base pèse 5,3 Go compressés, bien plus une fois décompressée :
+      # sans ce ménage le runner tombe à court d'espace PENDANT le `docker pull`,
+      # et meurt sans même pouvoir écrire son log (vécu le 2026-09-12).
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc                       /opt/hostedtoolcache /usr/local/share/boost /usr/share/swift
+          sudo docker system prune -af
+          df -h
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
