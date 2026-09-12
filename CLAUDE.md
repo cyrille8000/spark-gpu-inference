@@ -29,6 +29,9 @@ Détails du contrat : [README.md](README.md).
   se touchent). Dernière frontière qui tient dans `window_s` ; le creux d'énergie des 10 s avant la cible n'est plus
   qu'un REPLI (segment plus long que la fenêtre, ou appelant sans `cuts_s`). Ne pas réintroduire de détection de
   silence en premier choix.
+- **Chaque job rapporte son PIC de mémoire GPU** (`gpu_mem.allocated_gb` / `reserved_gb`, `gpu_mem_total_gb` —
+  `registry.reset_peak_memory()` au début, `peak_memory_gb()` à la fin). C'est `reserved` qui dit si un GPU suffit ;
+  avant le 2026-09-12 on ne connaissait la consommation que par l'OOM du 2026-09-11 (VC 179 s = plus de 22,5 Go).
 - **Chatterbox réglé par job, jamais empilé.** `VoiceConverter` garde les méthodes d'origine (`_orig_*`) et reconstruit
   les `functools.partial` à chaque job ; sinon les réglages s'accumulent d'un job à l'autre sur le modèle résident.
 - **L'image raconte le job (2026-09-09).** `callback_url` (+ `callback_token` en Bearer) reçoit `started`, des

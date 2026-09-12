@@ -61,6 +61,7 @@ def run_task(inp: dict, job_id: str, progress: Progress) -> dict:
     task = parse_task(inp)
     workdir = Path(tempfile.mkdtemp(prefix=f"spark-{task}-", dir=os.environ.get("SPARK_TMPDIR") or None))
     timer = Timer()
+    registry.reset_peak_memory()
     try:
         if task == "instrumental":
             result = _run_instrumental(parse_instrumental(inp), workdir, job_id, progress, timer)
@@ -71,6 +72,8 @@ def run_task(inp: dict, job_id: str, progress: Progress) -> dict:
             "elapsed_s": timer.total(), "timings": timer.timings,
             "device": registry.device(), "gpu_name": registry.gpu_name(),
             "models_loaded": registry.loaded(),
+            # Ce que le job a VRAIMENT demande a la carte, et ce qu'elle offre.
+            "gpu_mem": registry.peak_memory_gb(), "gpu_mem_total_gb": registry.vram_total_gb(),
         })
         return result
     finally:

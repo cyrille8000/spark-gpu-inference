@@ -63,6 +63,33 @@ def vram_total_gb() -> float | None:
         return None
 
 
+def reset_peak_memory() -> None:
+    """Remet a zero le compteur de PIC memoire CUDA — appele au debut de chaque job.
+    Les poids deja residents restent comptes (ils sont alloues) : le pic mesure donc
+    bien tout ce que le job demande a la carte."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def peak_memory_gb() -> dict | None:
+    """Pic memoire du job (Go) : `allocated` = tenseurs vivants au plus haut,
+    `reserved` = ce que l'allocateur a pris a la carte — c'est `reserved` qui
+    decide si un GPU suffit (mesure ajoutee le 2026-09-12 : jusque-la on ne
+    connaissait la consommation que par l'OOM du 2026-09-11). None sans CUDA."""
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return None
+        return {"allocated_gb": round(torch.cuda.max_memory_allocated() / 1e9, 2),
+                "reserved_gb": round(torch.cuda.max_memory_reserved() / 1e9, 2)}
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def gpu_name() -> str | None:
     try:
         import torch

@@ -92,6 +92,7 @@ Un seul tirage par job (décision du 2026-09-09) : pas de best-of-N, donc ni sco
   "model": "roformer-model-bs-roformer-leap-xe-instrumental-by-pcunwa",
   "format": "wav", "bytes": 8640044, "sha256": "…", "uploaded": true,
   "duration_s": 180.0, "sample_rate": 24000, "channels": 1, "attempts": 1,
+  "gpu_mem": { "allocated_gb": 3.1, "reserved_gb": 4.2 }, "gpu_mem_total_gb": 23.6,
   "elapsed_s": 21.4, "cold_start": true, "container_s": 27.9, "container_first_job": true,
   "started_at": "2026-09-09T20:01:02.123Z", "finished_at": "2026-09-09T20:01:24.011Z",
   "meta": { "project": "…", "portion": 3, "run": "sep_…", "attempt": 1 }, "provider": "modal", "heartbeats": 0,
