@@ -124,3 +124,32 @@ def test_process_job_reconnait_un_lot(monkeypatch):
     monkeypatch.setattr(tasks.registry, "vram_total_gb", lambda: 24.0)
     out = service.process_job(_lot(2), "lot-4")
     assert out.get("lot") is True and out["total"] == 2
+
+
+def test_deux_sous_jobs_ne_peuvent_pas_ecrire_au_meme_endroit(monkeypatch):
+    """Le seul endroit ou un lot pourrait ecraser un resultat : deux `output_url`
+    identiques. Le PUT du second effacerait le premier et les DEUX diraient
+    « completed ». Le reste est deja isole (dossier de travail unique par job,
+    exemplaire de modele propre a chaque job)."""
+    appels = []
+    monkeypatch.setattr(service, "run_task", lambda *a, **k: appels.append(1))
+    lot = {"jobs": [
+        {"task": "instrumental", "audio_url": "https://exemple/a.wav", "output_url": "https://r2/out.wav"},
+        {"task": "instrumental", "audio_url": "https://exemple/b.wav", "output_url": "https://r2/out.wav"},
+    ]}
+    out = service.process_lot(lot, "lot-5")
+    assert out["status"] == "error" and out["code"] == "bad_input"
+    assert "ecraseraient" in out["error"].replace("é", "e") or "craseraient" in out["error"]
+    assert appels == [], "aucun sous-job ne doit avoir tourne"
+
+
+def test_des_sorties_distinctes_passent(monkeypatch):
+    monkeypatch.setattr(service, "run_task",
+                        lambda inp, job_id, progress: {"status": "completed", "job_id": job_id})
+    monkeypatch.setattr(tasks.registry, "vram_total_gb", lambda: 24.0)
+    lot = {"jobs": [
+        {"task": "instrumental", "audio_url": "https://exemple/a.wav", "output_url": "https://r2/a.wav"},
+        {"task": "instrumental", "audio_url": "https://exemple/b.wav", "output_url": "https://r2/b.wav"},
+    ]}
+    assert service.process_lot(lot, "lot-6")["reussis"] == 2
+

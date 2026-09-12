@@ -60,6 +60,17 @@ def process_lot(inp: dict, job_id: str, progress: Progress | None = None) -> dic
     if any(not isinstance(s, dict) for s in sous):
         return {"status": "error", "code": "bad_input", "job_id": job_id,
                 "error": "chaque sous-job doit être un objet"}
+    # DEUX SOUS-JOBS NE DOIVENT PAS ÉCRIRE AU MÊME ENDROIT. Le reste est déjà isolé —
+    # dossier de travail unique par job (`tempfile.mkdtemp`), exemplaire de modèle
+    # propre à chaque job (`registry.lease`) — mais deux `output_url` identiques se
+    # recouvriraient sur R2, le second effaçant le premier, et les DEUX rendraient
+    # « completed ». Une erreur silencieuse, donc refusée ici.
+    sorties = [s.get("output_url") for s in sous if s.get("output_url")]
+    if len(set(sorties)) != len(sorties):
+        doublons = sorted({u for u in sorties if sorties.count(u) > 1})
+        return {"status": "error", "code": "bad_input", "job_id": job_id,
+                "error": f"{len(doublons)} `output_url` en double dans le lot : les sous-jobs "
+                         f"s'écraseraient sans le dire"}
 
     places = min(len(sous), places_pour_taches([str(s.get("task") or "") for s in sous]))
     t0 = time.monotonic()
