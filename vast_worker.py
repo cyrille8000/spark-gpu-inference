@@ -55,6 +55,7 @@ import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, "/app/src")
 
@@ -118,6 +119,62 @@ class Etat:
 
 
 ETAT = Etat()
+
+
+class Resultats:
+    """Ce qu'ont rendu les jobs déjà finis, relisible par `GET /result`.
+
+    Sans ça, `/submit` ne sait rendre compte que par `callback_url` — ce qui suppose
+    une adresse publique côté client. Un banc lancé depuis un poste de travail n'en a
+    pas, et se rabattait donc sur `/run`, qui garde la connexion ouverte pendant tout
+    le job. Mesuré le 2026-09-12 : au-delà de ~200 s de silence, la connexion est
+    coupée (`ConnectionResetError`) — 4 jobs perdus sur 24, puis 2 sur 20. Ces pertes
+    n'avaient rien à voir avec la carte, mais elles POLLUAIENT la mesure qu'on
+    cherchait. On garde donc le résultat ici et le client vient le chercher.
+    """
+
+    def __init__(self, maximum: int = 512) -> None:
+        self._lock = threading.Lock()
+        self._par_id: dict[str, dict] = {}
+        self._ordre: list[str] = []
+        self._max = maximum
+
+    def poser(self, job_id: str, resultat: dict) -> None:
+        with self._lock:
+            if job_id not in self._par_id:
+                self._ordre.append(job_id)
+            self._par_id[job_id] = resultat
+            while len(self._ordre) > self._max:
+                self._par_id.pop(self._ordre.pop(0), None)
+
+    def lire(self, job_id: str) -> dict | None:
+        with self._lock:
+            return self._par_id.get(job_id)
+
+
+RESULTATS = Resultats()
+
+
+def machine() -> dict:
+    """Ce que la MACHINE offre, pas seulement la carte. Une RTX 3090 à 0,22 $/h s'est
+    révélée 3× plus lente qu'une Blackwell (2026-09-12) : le GPU dormait, il manquait
+    du processeur. Sans ces chiffres à côté du débit, on attribue à la carte ce qui
+    revient à la machine."""
+    info: dict = {"cpu": os.cpu_count(), "gpus": None, "ram_gb": None}
+    try:
+        import torch
+        info["gpus"] = torch.cuda.device_count()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        with open("/proc/meminfo", encoding="ascii") as f:
+            for ligne in f:
+                if ligne.startswith("MemTotal:"):
+                    info["ram_gb"] = round(int(ligne.split()[1]) / 1048576, 1)
+                    break
+    except Exception:  # noqa: BLE001
+        pass
+    return info
 
 
 def _cuda_info() -> dict | None:
@@ -230,6 +287,7 @@ def etat_worker() -> dict:
         "device": registry.device(),
         "vram_total_gb": registry.vram_total_gb(),
         "vram": memoire_carte(),
+        "machine": machine(),
         "cuda": _cuda_info(),
         # Déduit de la carte trouvée, par tâche : une conversion vocale coûte bien
         # moins de mémoire qu'une séparation, donc la même carte en tient plus.
@@ -249,9 +307,11 @@ def executer(inp: dict, job_id: str) -> dict:
     """Un job, du début à la fin. `process_job` ne lève jamais : il rend une erreur typée."""
     ETAT.debut()
     try:
-        return process_job(inp, job_id)
+        out = process_job(inp, job_id)
     finally:
         ETAT.fin()
+    RESULTATS.poser(job_id, out)
+    return out
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -300,6 +360,17 @@ class Handler(BaseHTTPRequestHandler):
             if not self._autorise(None):
                 return
             self._rendre(200, etat_worker())
+            return
+        if route == "/result":
+            if not self._autorise(None):
+                return
+            job_id = parse_qs(urlparse(self.path).query).get("job_id", [""])[0]
+            out = RESULTATS.lire(job_id) if job_id else None
+            if out is None:
+                # 202 et pas 404 : le job peut simplement ne pas être fini.
+                self._rendre(202, {"ok": True, "pret": False, "job_id": job_id})
+                return
+            self._rendre(200, {"ok": True, "pret": True, "job_id": job_id, "resultat": out})
             return
         self._rendre(404, {"ok": False, "error": "not found"})
 
@@ -356,6 +427,9 @@ def main() -> None:
         raise SystemExit(2)
     carte = verifier_carte()
     port = int(os.environ.get("SPARK_WORKER_PORT", "8000"))
+    # 5 par défaut dans la bibliothèque standard : au-delà, le système jette les
+    # connexions en attente d'acceptation. Un lot de 20 jobs en ouvre 20 d'un coup.
+    ThreadingHTTPServer.request_queue_size = 128
     serveur = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     serveur.daemon_threads = True
     threading.Thread(target=surveiller_inactivite, args=(serveur,), daemon=True).start()
