@@ -102,7 +102,7 @@ def dire(r: dict) -> None:
 
 
 def chercher_plafond(url: str, token: str, charge: dict, vram_gb: float, timeout: float,
-                     cible: float, maximum: int) -> list[dict]:
+                     cible: float, maximum: int, cartes: int = 1) -> list[dict]:
     """Monte jusqu'a l'echec, puis resserre. Rapporte toutes les vagues tentees.
 
     La memoire par job n'est PAS constante : mesure le 2026-09-12 sur A100 80 Go, une
@@ -125,9 +125,13 @@ def chercher_plafond(url: str, token: str, charge: dict, vram_gb: float, timeout
         if pic <= 0:
             n = min(maximum, n * 2)
             continue
-        par_job = pic / n
+        # `pic` et `vram_gb` sont ceux d'UNE carte, alors que les jobs se repartissent
+        # sur toutes. Diviser le pic par le nombre TOTAL de jobs sous-estimerait le
+        # cout reel d'un job d'autant de fois qu'il y a de cartes.
+        sur_une_carte = max(1.0, n / cartes)
+        par_job = pic / sur_une_carte
         reste = vram_gb * cible - pic
-        vise = n + max(1, int(reste // par_job)) if par_job > 0 else n * 2
+        vise = n + max(cartes, int(reste // par_job) * cartes) if par_job > 0 else n * 2
         if vise <= n:
             print(f"-> {pic} Go sur {vram_gb:.1f} : la cible de {cible:.0%} est atteinte a {n} jobs")
             break
@@ -155,8 +159,9 @@ def chercher_plafond(url: str, token: str, charge: dict, vram_gb: float, timeout
     bons = [l for l in lignes if l["jobs"] == dernier_bon and l["reussis"] == l["jobs"]]
     if bons and bons[-1]["pic_carte_gb"] and vram_gb > 0:
         pic = bons[-1]["pic_carte_gb"]
-        print(f"  memoire au plafond : {pic} Go sur {vram_gb:.1f} ({pic / vram_gb:.0%} de la carte), "
-              f"{pic / dernier_bon:.2f} Go par job")
+        detail = f" reparti sur {cartes} cartes, soit {dernier_bon / cartes:.1f} par carte" if cartes > 1 else ""
+        print(f"  memoire au plafond : {pic} Go sur {vram_gb:.1f} PAR CARTE ({pic / vram_gb:.0%}), "
+              f"{pic / max(1.0, dernier_bon / cartes):.2f} Go par job{detail}")
     return lignes
 
 
@@ -211,7 +216,7 @@ def main() -> int:
             dire(r)
     else:
         lignes = chercher_plafond(a.url, a.token, charge, vram, a.timeout, a.cible,
-                                  min(a.maximum, capacite))
+                                  min(a.maximum, capacite), max(1, int(mach.get("gpus") or 1)))
 
     ref = next((l for l in lignes if l["jobs"] == 1 and l["reussis"]), None)
     if ref and ref["debit_par_min"]:
