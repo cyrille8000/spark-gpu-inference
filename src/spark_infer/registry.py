@@ -56,6 +56,13 @@ _pools: dict[tuple[str, str], _Pool] = {}
 # La carte sur laquelle tourne le job de CE fil : posee par `lease`, lue par les
 # mesures memoire et par le resultat du job. Sans ca, un job sur `cuda:1`
 # rapporterait le pic de `cuda:0`.
+#
+# `derniere` survit a la fermeture du bail, et c'est necessaire : le resultat d'un job
+# (`device`, `gpu_mem`) est assemble APRES la sortie du bloc `lease`. Sans elle, un lot
+# de 8 sous-jobs repartis sur 4 cartes rapportait « cuda:0 » huit fois et le pic de la
+# seule carte 0 — constate le 2026-09-12 sur RunPod. Les cartes etaient bien utilisees
+# (9,81 Go de pic, soit 2 jobs, la ou 8 sur une carte auraient deborde), mais la mesure
+# ne le montrait pas.
 _courant = threading.local()
 _cartes_cache: list[str] | None = None
 
@@ -91,8 +98,9 @@ def limiter_cartes(cartes: list[str]) -> None:
 
 
 def device() -> str:
-    """La carte du job en cours sur ce fil, ou la premiere de la machine."""
-    return getattr(_courant, "carte", None) or devices()[0]
+    """La carte du job de ce fil : celle du bail en cours, sinon celle du dernier bail
+    (le resultat d'un job s'assemble apres sa fermeture), sinon la premiere carte."""
+    return getattr(_courant, "carte", None) or getattr(_courant, "derniere", None) or devices()[0]
 
 
 def _index(carte: str | None = None) -> int | None:
@@ -128,6 +136,7 @@ def lease(name: str, factory: Callable[[str], T], max_instances: int = 1) -> Ite
     carte, inst, cold = _acquire(name, factory, max_instances)
     precedente = getattr(_courant, "carte", None)
     _courant.carte = carte
+    _courant.derniere = carte
     try:
         yield inst, cold
     finally:
@@ -265,6 +274,7 @@ def reset() -> None:
         _cond.notify_all()
     _cartes_cache = None
     _courant.carte = None
+    _courant.derniere = None
 
 
 def vram_total_gb() -> float | None:

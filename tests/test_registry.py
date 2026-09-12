@@ -153,3 +153,22 @@ def test_une_seule_carte_se_comporte_comme_avant():
             assert "cartes" not in etat
     finally:
         registry.reset()
+
+
+def test_la_carte_du_job_reste_lisible_apres_le_bail():
+    """Le resultat d'un job (`device`, `gpu_mem`) s'assemble APRES la sortie du bloc
+    `lease`. Si la carte etait oubliee a la fermeture, tout un lot rapporterait
+    « cuda:0 » et le pic de la seule carte 0 — vecu le 2026-09-12 sur un worker RunPod
+    a 4 cartes : huit sous-jobs annonces sur cuda:0 alors que la memoire prouvait
+    qu'ils etaient deux par carte."""
+    registry.reset()
+    registry._cartes_cache = ["cuda:0", "cuda:1"]
+    try:
+        with registry.lease("m", _obj, 2):
+            with registry.lease("m", _obj, 2):
+                pass
+        # Le fil a fini sur la 2e carte : c'est elle que le resultat doit nommer.
+        assert registry.device() == "cuda:1"
+    finally:
+        registry.reset()
+
