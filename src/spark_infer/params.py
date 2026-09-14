@@ -4,12 +4,17 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+from .faces_clip import DEFAULT_MARGIN_S
 from .io_utils import InputError, check_url
 
-TASKS = ("instrumental", "vc")
+TASKS = ("instrumental", "vc", "speaking_faces")
 MAX_REFS = 8
 # Frontières autorisées d'une source vc : un chunk de 3 min en compte quelques dizaines.
 MAX_CUTS = 10_000
+# Visages qui parlent : une portion plus longue qu'une heure n'est pas une portion (le temps
+# d'analyse suit la durée, ~1 à 2× ; les hébergeurs coupent à 900 s chez Modal).
+MAX_WINDOW_S = 3600.0
+MAX_MARGIN_S = 30.0
 
 # TOUT RÉSULTAT EST UN WAV MONO 24 kHz 16 bits (décision propriétaire, 2026-09-09) : ce n'est pas un paramètre.
 OUTPUT_FORMAT = "wav"
@@ -180,6 +185,45 @@ def parse_vc(inp: dict) -> VcRequest:
         output_url=_output_url(inp),
         params=params,
         cuts_s=_cuts(inp),
+    )
+
+
+@dataclass
+class SpeakingFacesRequest:
+    video_url: str
+    audio_url: str | None                    # le son, s'il vit dans un autre fichier que l'image
+    window: tuple[float, float] | None       # (start, end) en secondes de la vidéo d'origine, marge exclue
+    margin: float                            # contexte analysé puis jeté, de chaque côté (s)
+    output_url: str | None                   # dépôt JSON facultatif : le résultat voyage aussi dans la réponse
+
+
+def _window(inp: dict) -> tuple[float, float] | None:
+    """`start` / `end` : la portion à analyser. Les deux vont ENSEMBLE — un `start` seul ferait
+    analyser toute la fin de la vidéo par un job qui croit traiter une portion. Aucun des deux :
+    toute la vidéo."""
+    start, end = inp.get("start"), inp.get("end")
+    if start is None and end is None:
+        return None
+    if start is None or end is None:
+        raise InputError("start et end vont ensemble : donner les deux, ou aucun")
+    s = _float(inp, "start", 0.0, 1e7, None)
+    e = _float(inp, "end", 0.0, 1e7, None)
+    assert s is not None and e is not None
+    if e <= s:
+        raise InputError("end doit être strictement après start")
+    if e - s > MAX_WINDOW_S:
+        raise InputError(f"fenêtre de {e - s:.0f} s : {MAX_WINDOW_S:.0f} s maximum par job")
+    return s, e
+
+
+def parse_speaking_faces(inp: dict) -> SpeakingFacesRequest:
+    audio = inp.get("audio_url")
+    return SpeakingFacesRequest(
+        video_url=check_url(inp.get("video_url"), "video_url"),
+        audio_url=check_url(audio, "audio_url") if audio else None,
+        window=_window(inp),
+        margin=_float(inp, "margin", 0.0, MAX_MARGIN_S, DEFAULT_MARGIN_S),  # type: ignore[arg-type]
+        output_url=_output_url(inp),
     )
 
 

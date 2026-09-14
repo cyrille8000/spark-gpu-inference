@@ -5,6 +5,7 @@ propriétaire retient (2026-09-09), avec `executionTime` du statut RunPod.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -19,14 +20,17 @@ import soundfile as sf
 
 from . import registry
 from .audio_utils import is_cuda_oom
-from .io_utils import InputError, decode_to_wav, deliver, download, encode_output, ffprobe_duration
-from .params import OUTPUT_FORMAT, OUTPUT_MONO, OUTPUT_SR, InstrumentalRequest, VcRequest, parse_instrumental, parse_task, parse_vc
+from .io_utils import (InputError, decode_to_wav, deliver, download, encode_output, ffprobe_duration,
+                       sha256_of, upload_put)
+from .params import (OUTPUT_FORMAT, OUTPUT_MONO, OUTPUT_SR, InstrumentalRequest, SpeakingFacesRequest,
+                     VcRequest, parse_instrumental, parse_speaking_faces, parse_task, parse_vc)
 
 log = logging.getLogger("spark.tasks")
 
 MODELS_DIR = Path(os.environ.get("SPARK_MODELS_DIR", "/models"))
 BSROFORMER_DIR = Path(os.environ.get("BS_ROFORMER_MODELS_PATH", str(MODELS_DIR / "bsroformer")))
 CHATTERBOX_DIR = MODELS_DIR / "chatterbox"
+LRASD_DIR = MODELS_DIR / "lrasd"
 
 Progress = Callable[[dict], None]
 
@@ -85,6 +89,12 @@ class Timer:
 COUT_MEMOIRE_GB = {
     "chatterbox_vc": (5.0, 1.6),
     "bs_roformer_leap_xe": (0.6, 3.9),
+    # Visages qui parlent : PAS ENCORE MESURÉ (2026-09-15, code écrit sans build ni déploiement).
+    # Estimation prudente : S3FD est un VGG16 sur une image réduite (480×270 en 1080p), LR-ASD un
+    # réseau léger (3,4 Mo de poids) — l'un et l'autre bien sous une séparation. À caler par le
+    # banc (`bench_concurrence.py`) avec une portion de production AVANT d'ouvrir plus d'une place.
+    # Attention : cette tâche est aussi bornée par le CPU (décodage vidéo, recadrage, MFCC).
+    "lr_asd": (1.5, 1.0),
 }
 # Une tâche inconnue est traitée en gourmande : mieux vaut un job de moins qu'un OOM.
 COUT_INCONNU_GB = (12.0, 6.0)
@@ -190,7 +200,7 @@ def jobs_per_gpu(modele: str = "chatterbox_vc") -> int:
     return par_carte * max(1, len(registry.devices()))
 
 
-MODELE_DE_TACHE = {"vc": "chatterbox_vc", "instrumental": "bs_roformer_leap_xe"}
+MODELE_DE_TACHE = {"vc": "chatterbox_vc", "instrumental": "bs_roformer_leap_xe", "speaking_faces": "lr_asd"}
 
 
 def places_pour_taches(taches: list[str]) -> int:
@@ -221,8 +231,10 @@ def run_task(inp: dict, job_id: str, progress: Progress) -> dict:
     try:
         if task == "instrumental":
             result = _run_instrumental(parse_instrumental(inp), workdir, job_id, progress, timer)
-        else:
+        elif task == "vc":
             result = _run_vc(parse_vc(inp), workdir, job_id, progress, timer)
+        else:
+            result = _run_speaking_faces(parse_speaking_faces(inp), workdir, job_id, progress, timer)
         # Mémoire : `jobs` = le plus grand nombre de jobs qui se sont croisés pendant
         # celui-ci (1 = mesure propre, ce job seul) ; `clean` = le compteur partait de
         # zéro. Sans ça, un pic mesuré à plusieurs serait pris pour le coût d'un job.
@@ -234,7 +246,7 @@ def run_task(inp: dict, job_id: str, progress: Progress) -> dict:
             "elapsed_s": timer.total(), "timings": timer.timings,
             "device": registry.device(), "gpu_name": registry.gpu_name(),
             "models_loaded": registry.loaded(), "pools": registry.pool_state(),
-            "jobs_per_gpu": jobs_per_gpu("chatterbox_vc" if task == "vc" else "bs_roformer_leap_xe"),
+            "jobs_per_gpu": jobs_per_gpu(MODELE_DE_TACHE[task]),
             # Ce que le job a VRAIMENT demandé à la carte, et ce qu'elle offre.
             "gpu_mem": mem, "gpu_mem_total_gb": registry.vram_total_gb(),
         })
@@ -375,3 +387,90 @@ def _run_vc(req: VcRequest, workdir: Path, job_id: str, progress: Progress, time
     report(100, "terminé")
     return {**delivered, **meta, "sample_rate": OUTPUT_SR, "channels": 1,
             "duration_s": round(len(wav) / sr, 3), "attempts": attempts, "cold_start": cold_start}
+
+
+# ============================================================ VISAGES QUI PARLENT (LR-ASD)
+
+def _run_speaking_faces(req: SpeakingFacesRequest, workdir: Path, job_id: str, progress: Progress,
+                        timer: Timer) -> dict:
+    """Qui parle à l'image, et où. Sortie : `speech` (quand quelqu'un parle, secondes au millième,
+    visages fusionnés) et `faces` (où : une suite de boîtes par visage et par passage, en fractions
+    de l'image). Les temps sont TOUJOURS ceux de la vidéo d'origine, jamais de l'extrait — c'est ce
+    qui permet d'analyser une vidéo longue par portions, en parallèle, et de recoller par simple
+    fusion d'intervalles. Contrat complet : docs/TACHE_VISAGES_QUI_PARLENT.md."""
+    import soundfile as sf
+
+    from .faces_clip import SR_ANALYSE, clip_bounds, cut, facedet_scale, probe_media, to_analysis_wav
+    from .faces_engine import MODEL_NAME, WEIGHTS_ASD, SpeakingFaceDetector
+    from .faces_segments import speaking_faces, speech_seconds
+
+    def report(pct: int, msg: str) -> None:
+        progress({"task": "speaking_faces", "percent": pct, "message": msg})
+
+    clip_start, clip_end = clip_bounds(req.window, req.margin)
+    clip_mp4, raw_wav = workdir / "clip.mp4", workdir / "audio_raw.wav"
+    with timer.step("download"):
+        # Téléchargement ET découpe ne font qu'un : ffmpeg lit la source par requêtes Range et
+        # n'écrit que la portion voulue (25 i/s) et son son — jamais de fichier complet.
+        cut(req.video_url, req.audio_url, clip_start, clip_end, clip_mp4, raw_wav)
+    report(5, "extrait découpé")
+
+    base: dict = {
+        "model": f"{MODEL_NAME}/{WEIGHTS_ASD}",
+        "window": {"start": req.window[0], "end": req.window[1]} if req.window else None,
+        "clip": {"start": round(clip_start, 3), "end": round(clip_end, 3) if clip_end is not None else None},
+    }
+    media = probe_media(clip_mp4)
+    if media is None:
+        # Fenêtre située APRÈS la fin du média : ffmpeg sort en succès avec un conteneur vide. Là
+        # où il n'y a pas d'image, il n'y a pas de parole — une portion de trop en fin de découpage
+        # ne fait pas échouer toute l'analyse, mais ça se dit dans les logs.
+        log.warning("[%s] aucun flux vidéo sur [%.1f, %s] — fenêtre après la fin du média ?",
+                    job_id, clip_start, "fin" if clip_end is None else f"{clip_end:.1f}")
+        return _deliver_faces({**base, "speech": [], "faces": [], "frames": 0, "scenes": 0, "tracks": 0,
+                               "attempts": 1, "cold_start": False}, req.output_url, workdir, timer)
+
+    with timer.step("decode"):
+        audio, sr = sf.read(to_analysis_wav(raw_wav, workdir / "audio16k.wav"), dtype="int16")
+    if sr != SR_ANALYSE:
+        raise RuntimeError(f"audio d'analyse à {sr} Hz au lieu de {SR_ANALYSE}")
+    if audio.ndim > 1:
+        audio = audio[:, 0]
+    scale = facedet_scale(media["width"])
+    report(10, f"{media['width']}×{media['height']} à {media['fps']:.3g} i/s, échelle de détection {scale}")
+
+    cold_start = False
+
+    def analyse():
+        nonlocal cold_start
+        with _lease(MODEL_NAME, lambda carte: SpeakingFaceDetector(LRASD_DIR, carte), timer) as (det, cold):
+            cold_start = cold_start or cold
+            with timer.step("inference"):
+                return det.run(clip_mp4, audio, scale, progress=report)
+
+    (tracks, scores, info), attempts = _with_oom_retry(job_id, "visages qui parlent", analyse, keep=MODEL_NAME)
+    timer.timings.update(info["timings"])
+
+    fps, w, h = media["fps"], media["width"], media["height"]
+    speech = speech_seconds(tracks, scores, fps, offset=clip_start, window=req.window)
+    faces = speaking_faces(tracks, scores, fps, w, h, offset=clip_start, window=req.window)
+    report(96, f"{len(speech)} intervalle(s) de parole, {len(faces)} passage(s) de visage")
+    base["clip"].update({"fps": round(fps, 3), "width": w, "height": h, "frames": info["frames"]})
+    return _deliver_faces({**base, "speech": speech, "faces": faces, "frames": info["frames"],
+                           "scenes": info["scenes"], "tracks": info["tracks"],
+                           "attempts": attempts, "cold_start": cold_start}, req.output_url, workdir, timer)
+
+
+def _deliver_faces(result: dict, output_url: str | None, workdir: Path, timer: Timer) -> dict:
+    """Le résultat est PETIT (les boîtes sont échantillonnées, 4 000 points au plus) : il voyage
+    dans la réponse et dans le rappel `finished`. `output_url` le dépose EN PLUS en JSON sur R2,
+    pour qui préfère le relire de là."""
+    with timer.step("upload"):
+        out = workdir / "speaking_faces.json"
+        out.write_text(json.dumps({k: result[k] for k in ("speech", "faces", "window", "clip")},
+                                  ensure_ascii=False), encoding="utf-8")
+        result.update({"format": "json", "bytes": out.stat().st_size, "sha256": sha256_of(out), "uploaded": False})
+        if output_url:
+            upload_put(output_url, out, "application/json")
+            result["uploaded"] = True
+    return result

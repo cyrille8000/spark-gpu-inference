@@ -320,7 +320,8 @@ def etat_worker() -> dict:
         # moins de mémoire qu'une séparation, donc la même carte en tient plus.
         "jobs_per_gpu": jobs_per_gpu("chatterbox_vc"),
         "jobs_par_tache": {"vc": jobs_per_gpu("chatterbox_vc"),
-                           "instrumental": jobs_per_gpu("bs_roformer_leap_xe")},
+                           "instrumental": jobs_per_gpu("bs_roformer_leap_xe"),
+                           "speaking_faces": jobs_per_gpu("lr_asd")},
         "jobs_actifs": ETAT.actifs,
         "jobs_faits": ETAT.faits,
         "pools": registry.pool_state(),

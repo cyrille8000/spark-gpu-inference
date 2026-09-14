@@ -1,7 +1,8 @@
 # CLAUDE.md — spark-gpu-inference
 
-Image Docker RunPod Serverless d'inférence GPU pour Spark Dubbing. Deux tâches, choisies par `input.task` :
-`instrumental` (BS-Roformer Leap Xe, instrumental seul) et `vc` (conversion de timbre Chatterbox VC).
+Image Docker RunPod Serverless d'inférence GPU pour Spark Dubbing. Trois tâches, choisies par `input.task` :
+`instrumental` (BS-Roformer Leap Xe, instrumental seul), `vc` (conversion de timbre Chatterbox VC) et
+`speaking_faces` (visages qui parlent, LR-ASD — code seulement au 2026-09-15, ni bâti ni déployé).
 Détails du contrat : [README.md](README.md).
 
 ## Règles
@@ -10,6 +11,15 @@ Détails du contrat : [README.md](README.md).
   `HF_HUB_OFFLINE=1` ensuite et `BS_ROFORMER_MODELS_PATH=/models/bsroformer`. Tout nouveau modèle passe par ce script
   **et** par `scripts/smoke_test.py`, qui prouve le chargement hors ligne sur CPU (et une vraie passe avant pour BS-Roformer)
   avant publication.
+- **Visages qui parlent = LR-ASD EN INTERNE, code vendu** (`src/spark_infer/lrasd/`, MIT, commit `1b6dcd2d`),
+  jamais un sous-processus `Columbia_test.py` comme dans l'ancienne image `spark-dubbing-lipsync`. Les constantes et
+  formules de `faces_geometry.py` sont RELEVÉES dans l'original, une à une, et testées sans torch : ne pas les
+  « simplifier » (seuil `>= 0` après lissage sur 5 images, `NUM_FAILED_DET` = écart d'INDICE ≤ 10, medfilt 13,
+  recadrage 224 puis centre 112, six passes de 1 à 6 s moyennées et arrondies au dixième). Un seul jeu de poids ASD :
+  `finetuning_TalkSet` (F1 96,4 % contre 86,1 %). `sfd_face.pth` n'existe que sur Google Drive : sha256 et taille
+  vérifiés au build, miroir `SPARK_S3FD_URL` à poser sur files.dubbingspark.com. `COUT_MEMOIRE_GB["lr_asd"]` est une
+  ESTIMATION non mesurée. Sans `audio_url`, la plateforme ne détectera jamais rien (`video_final.mp4` est muet) : un
+  extrait sans son est `bad_input`. Détail : [docs/TACHE_VISAGES_QUI_PARLENT.md](docs/TACHE_VISAGES_QUI_PARLENT.md).
 - **Un seul modèle de séparation.** BS-Roformer Leap Xe (`pcunwa/BS-Roformer-Leap`, slug
   `roformer-model-bs-roformer-leap-xe-instrumental-by-pcunwa` dans bs-roformer-infer), choisi le 2026-09-09 sur le
   Multisong de MVSEP (18,07 dB instrumental) à la place de l'ensemble Demucs/MDX de la plateforme (~17,5). Le stem de

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Vérification de build (CPU, HORS LIGNE) : chaque modèle se charge depuis les poids embarqués,
-BS-Roformer fait une vraie passe avant, et les points d'accroche réglés par le moteur VC existent."""
+BS-Roformer fait une vraie passe avant, les points d'accroche réglés par le moteur VC existent,
+et S3FD + LR-ASD (visages qui parlent) font chacun une passe avant."""
 from __future__ import annotations
 
 import inspect
@@ -56,6 +57,30 @@ def check_chatterbox() -> None:
           f"meanflow={getattr(vc.s3gen, 'meanflow', None)}")
 
 
+def check_lrasd() -> None:
+    import cv2
+    import numpy as np
+    import python_speech_features  # noqa: F401 — les MFCC de la tâche
+    import scenedetect
+
+    from spark_infer.faces_engine import SpeakingFaceDetector
+    from spark_infer.tasks import LRASD_DIR
+
+    det = SpeakingFaceDetector(LRASD_DIR, device="cpu")
+    # S3FD : une vraie passe avant sur une image grise (aucun visage attendu — ce qu'on prouve,
+    # c'est que le réseau se charge, tourne, et rend la forme promise).
+    boxes = det.detect_faces(np.full((180, 320, 3), 110, np.uint8), 1.0)
+    assert boxes.ndim == 2 and boxes.shape[1] == 5, boxes.shape
+    # LR-ASD : une seconde de bruit → un score fini par image évaluée.
+    rng = np.random.default_rng(0)
+    faces = rng.integers(0, 256, (25, 112, 112), dtype=np.uint8)
+    audio = rng.integers(-3000, 3000, 16000, dtype=np.int16)
+    scores = det.score_track(faces, audio)
+    assert 0 < len(scores) <= 25 and np.isfinite(scores).all(), scores
+    print(f"[lrasd] OK — S3FD {len(boxes)} boîte(s) sur du gris, ASD {len(scores)} scores, "
+          f"cv2 {cv2.__version__}, scenedetect {scenedetect.__version__}")
+
+
 def check_runtime() -> None:
     import runpod
     import torch
@@ -70,4 +95,5 @@ if __name__ == "__main__":
     check_runtime()
     check_bsroformer()
     check_chatterbox()
+    check_lrasd()
     print("[smoke_test] tout est chargeable hors ligne")

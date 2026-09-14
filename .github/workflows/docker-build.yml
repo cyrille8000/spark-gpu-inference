@@ -72,5 +72,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Miroir HTTP du détecteur S3FD (variable de dépôt, facultative) : vide = Google Drive.
+          build-args: |
+            SPARK_S3FD_URL=${{ vars.SPARK_S3FD_URL }}
           cache-from: type=gha,scope=serverless
           cache-to: type=gha,mode=min,scope=serverless

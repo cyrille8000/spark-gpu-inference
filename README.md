@@ -1,11 +1,12 @@
 # Spark GPU Inference — image RunPod Serverless
 
-Une seule image, deux tâches choisies par le paramètre `task` du job :
+Une seule image, trois tâches choisies par le paramètre `task` du job :
 
 | `task` | Ce que ça fait | Modèle embarqué |
 |--------|----------------|-----------------|
 | `instrumental` | Instrumental seul. **BS-Roformer Leap Xe** (unwa, juin 2026) : un seul checkpoint entraîné directement sur la cible instrumentale, 18,07 dB SDR instrumental sur le Multisong de MVSEP, au-dessus des ensembles internes du site. | `pcunwa/BS-Roformer-Leap` → `Xe/bs_leap_xe_inst.ckpt` (268 MB), chargé par [bs-roformer-infer](https://github.com/openmirlab/bs-roformer-infer) (MIT, épinglé sur le commit `b0f1386f` : la roue PyPI 0.1.5 ne connaît pas Leap) avec sha256 vérifié |
 | `vc` | Conversion de timbre Chatterbox VC (S3Gen) : timbre moyenné sur 1..8 clips de référence, prompt phonétique optionnel, pas / temperature / CFG réglables, complétion de la queue collée bout à bout (sans fondu). Un seul tirage. | `ResembleAI/chatterbox` (`s3gen.safetensors`, `conds.pt`) |
+| `speaking_faces` | **Visages qui parlent** : qui parle à l'image, et où. LR-ASD (Liao et al., IJCV 2025) en interne — S3FD trouve les visages, le réseau audio-visuel dit image par image si chacun parle. Sortie : `speech` (quand) + `faces` (où, boîtes en fractions de l'image). Analysable par portions, temps de la vidéo d'origine. **Code seulement au 2026-09-15** : ni build, ni déploiement, ni mesure. | LR-ASD commit `1b6dcd2d` (`finetuning_TalkSet.model`) + S3FD `sfd_face.pth`, sha256 vérifiés au build — [docs/TACHE_VISAGES_QUI_PARLENT.md](docs/TACHE_VISAGES_QUI_PARLENT.md) |
 
 Tous les poids sont dans l'image (`/models`). À l'inférence, `HF_HUB_OFFLINE=1` et le checkpoint BS-Roformer est
 résolu localement : **aucun téléchargement de modèle**. Les modèles restent résidents entre deux jobs d'un même worker.
@@ -15,15 +16,15 @@ torch embarquent CUDA/cuDNN, seul le pilote de l'hôte est requis.
 
 ## Contrat d'entrée
 
-Commun aux deux tâches :
+Commun aux trois tâches :
 
 | Champ | Type | Défaut | Rôle |
 |-------|------|--------|------|
-| `task` | `"instrumental"` \| `"vc"` | — | obligatoire |
+| `task` | `"instrumental"` \| `"vc"` \| `"speaking_faces"` | — | obligatoire |
 | `output_url` | URL | — | PUT présigné (R2/S3). Sans lui, le résultat revient en `audio_base64` (≤ 10 MB) |
 
-**Tout résultat est un WAV mono 24 kHz 16 bits**, sans option : c'est le format de la plateforme. Rééchantillonnage soxr,
-mixage mono à gain 1 (matrices `pan` explicites, jamais `-ac`).
+**Tout résultat audio est un WAV mono 24 kHz 16 bits**, sans option : c'est le format de la plateforme. Rééchantillonnage soxr,
+mixage mono à gain 1 (matrices `pan` explicites, jamais `-ac`). `speaking_faces` rend du JSON (dans la réponse, et sur `output_url` si donné).
 | `callback_url` | URL | — | rappels de l'image : `started`, `heartbeat`, `finished` (`POST` JSON, voir ci-dessous) |
 | `callback_token` | string | — | envoyé en `Authorization: Bearer …` sur chaque rappel |
 | `meta` | objet | — | OPAQUE : renvoyé tel quel dans chaque rappel et dans le résultat (projet, portion, tentative, compte…) |
@@ -84,6 +85,26 @@ La sortie a la durée exacte de la source. Si le modèle produit plus court, la 
 sortie est reconvertie seule et **collée bout à bout, sans recouvrement ni fondu** (décision du 2026-09-09), jusqu'à 5 fois ;
 `tail_passes` compte ces passes. Le filigrane Perth de Chatterbox est conservé (comportement natif de `generate`).
 Un seul tirage par job (décision du 2026-09-09) : pas de best-of-N, donc ni scorer ECAPA, ni Whisper, ni `resemble-enhance`.
+
+### `task: "speaking_faces"`
+
+```json
+{ "input": { "task": "speaking_faces", "video_url": "https://…/video_final.mp4", "audio_url": "https://…/audio_stream.m4a",
+             "start": 300, "end": 600, "margin": 2, "output_url": "https://…(PUT, facultatif)" } }
+```
+
+| Champ | Défaut | Rôle |
+|-------|--------|------|
+| `video_url` | — | la vidéo, lue par requêtes Range (`-ss` avant `-i` : seule la portion est tirée) |
+| `audio_url` | piste de `video_url` | le son, s'il vit dans un autre fichier — OBLIGATOIRE dans la plateforme (`video_final.mp4` est muet). Sans son : `bad_input`, jamais une liste vide |
+| `start` / `end` | toute la vidéo | la portion, en secondes de la vidéo d'origine ; les deux ou aucun ; 3 600 s au plus |
+| `margin` | 2 | contexte analysé puis jeté de chaque côté (0..30 s) |
+
+Sortie : `speech` = `[{start, end}]` (quand quelqu'un parle, au millième, visages fusionnés) ; `faces` = `[{start, end,
+box: [[t, x, y, w, h], …]}]` (où : une suite par visage et par passage, fractions de l'image, points échantillonnés) ;
+`window`, `clip` (ce qui a été analysé, marge comprise, et ce que ffprobe y a mesuré), `frames`, `scenes`, `tracks`, plus les
+champs communs. Les temps sont ceux de la vidéo d'origine : recoller des portions = fusionner des intervalles.
+Contrat complet, poids, pièges et ce qui reste : **[docs/TACHE_VISAGES_QUI_PARLENT.md](docs/TACHE_VISAGES_QUI_PARLENT.md)**.
 
 ## Vast.ai (image à part, cœur commun)
 
@@ -291,9 +312,14 @@ src/spark_infer/
 ├── tasks.py                     # téléchargement → modèle → encodage → livraison, rejeu OOM
 ├── separation_engine.py         # InstrumentalSeparator (BS-Roformer Leap Xe via BSRoformerSession)
 ├── vc_engine.py                 # VoiceConverter (Chatterbox réglé, un tirage)
+├── faces_engine.py              # SpeakingFaceDetector (S3FD + LR-ASD résidents : plans, détection, suivi, recadrage, scores)
+├── faces_geometry.py            # la géométrie de LR-ASD, pure (suivi, recadrage, lots de scoring) — testée sans torch
+├── faces_segments.py            # des pistes et scores aux moments de parole et aux boîtes (repris de spark-dubbing-lipsync)
+├── faces_clip.py                # découpe ffmpeg de la portion (pure) + sondes
+├── lrasd/                       # LR-ASD vendu (MIT) : S3FD (s3fd_net, s3fd_box) et le réseau audio-visuel (asd_model)
 ├── registry.py                  # modèles résidents, libération sur OOM
 ├── io_utils.py                  # HTTP, ffmpeg, PUT présigné, base64
 └── audio_utils.py               # fonctions pures (prétraitement, ajustement de durée)
-scripts/fetch_weights.py         # build : poids BS-Roformer + Chatterbox
+scripts/fetch_weights.py         # build : poids BS-Roformer + Chatterbox + LR-ASD (sha256 vérifiés)
 scripts/smoke_test.py            # build : chargement hors ligne + passe avant BS-Roformer
 ```

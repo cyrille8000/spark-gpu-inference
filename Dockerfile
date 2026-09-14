@@ -1,7 +1,8 @@
 # =============================================================================
 # Spark GPU Inference — RunPod Serverless
-#   task "instrumental" : BS-Roformer Leap Xe (unwa) — instrumental seul
-#   task "vc"           : conversion de timbre Chatterbox VC (S3Gen), un tirage
+#   task "instrumental"   : BS-Roformer Leap Xe (unwa) — instrumental seul
+#   task "vc"             : conversion de timbre Chatterbox VC (S3Gen), un tirage
+#   task "speaking_faces" : visages qui parlent — LR-ASD (S3FD + réseau audio-visuel), en interne
 # Tout est embarqué au build (paquets + poids) : zéro téléchargement à l'inférence.
 # Base Python pure : les roues torch cu128 embarquent leurs bibliothèques CUDA/cuDNN,
 # seul le pilote de l'hôte RunPod est nécessaire.
@@ -25,8 +26,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
 
 # ---------------------------------------------------------------- [1/5] système
+# libglib2.0-0 : opencv-python-headless (visages qui parlent) charge libgthread-2.0 à l'import,
+# absente de l'image slim — sans elle `import cv2` échoue au premier job, pas au build.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg libsndfile1 curl git ca-certificates \
+        ffmpeg libsndfile1 libglib2.0-0 curl git ca-certificates \
     && apt-get clean && rm -rf /var/lib/apt/lists/* \
     && python -m pip install --upgrade pip wheel "setuptools<82"
 # setuptools < 82 : resemble-perth (filigrane de Chatterbox) importe encore `pkg_resources`, supprimé en 82.0.0 ;
@@ -51,9 +54,11 @@ RUN set +e; pip check > /tmp/pipcheck.txt; set -e; cat /tmp/pipcheck.txt; \
     if grep -v '^chatterbox-tts ' /tmp/pipcheck.txt | grep -q ' requires '; then \
         echo 'Conflit de dépendances (hors gradio de chatterbox-tts)'; exit 1; fi
 
-# ---------------------------------------------------------------- [4/5] poids : BS-Roformer Leap Xe (sha256 vérifié) + Chatterbox VC
+# ---------------------------------------------------------------- [4/5] poids : BS-Roformer Leap Xe + Chatterbox VC + LR-ASD (sha256 vérifiés)
+# SPARK_S3FD_URL : miroir HTTP du détecteur S3FD (89,8 Mo) ; vide = Google Drive via gdown (quota).
+ARG SPARK_S3FD_URL=""
 COPY scripts/fetch_weights.py /app/scripts/fetch_weights.py
-RUN python /app/scripts/fetch_weights.py \
+RUN SPARK_S3FD_URL="${SPARK_S3FD_URL}" python /app/scripts/fetch_weights.py \
     && rm -rf /models/hf/hub/.locks /models/chatterbox/.cache \
     && du -sh /models/*
 

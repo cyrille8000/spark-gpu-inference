@@ -22,6 +22,16 @@ omegaconf
 safetensors
 huggingface_hub
 
+# --- Visages qui parlent : LR-ASD (MIT), code vendu sous src/spark_infer/lrasd ---
+# opencv HEADLESS (pas de libGL dans l'image) : décodage de l'extrait, recadrage des visages.
+opencv-python-headless>=4.8,<5
+# PySceneDetect : les plans, comme scene_detect() de LR-ASD (API open_video/SceneManager, 0.6+).
+scenedetect>=0.6.4,<0.8
+# MFCC de l'audio des pistes, exactement le paquet et les réglages de LR-ASD.
+python_speech_features==0.6
+# BUILD SEULEMENT : le détecteur S3FD n'est hébergé que sur Google Drive (fetch_weights.py).
+gdown>=5.1
+
 # --- Runtime ---
 runpod>=1.7.0
 requests

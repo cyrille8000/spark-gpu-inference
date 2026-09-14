@@ -81,6 +81,10 @@ def test_places_calculees_sur_la_tache_la_plus_gourmande(monkeypatch):
     assert tasks.places_pour_taches(["instrumental"]) == 5
     assert tasks.places_pour_taches(["vc"]) == 9
     assert tasks.places_pour_taches(["vc", "instrumental"]) == 5
+    # Visages qui parlent : estimation NON mesurée (1,5 Go + 1 Go/job, marge 0,85) → 18 sur 24 Go ;
+    # un lot mélangé se dimensionne toujours sur la tâche la plus gourmande.
+    assert tasks.places_pour_taches(["speaking_faces"]) == 18
+    assert tasks.places_pour_taches(["speaking_faces", "instrumental"]) == 5
     # Une tache inconnue est traitee en gourmande.
     assert tasks.places_pour_taches(["quoi"]) == 1
 

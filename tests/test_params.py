@@ -6,7 +6,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from spark_infer.io_utils import InputError  # noqa: E402
-from spark_infer.params import parse_callback, parse_instrumental, parse_task, parse_vc  # noqa: E402
+from spark_infer.params import (  # noqa: E402
+    MAX_WINDOW_S, parse_callback, parse_instrumental, parse_speaking_faces, parse_task, parse_vc,
+)
 
 URL = "https://example.com/a.wav"
 
@@ -14,6 +16,7 @@ URL = "https://example.com/a.wav"
 def test_task_required():
     assert parse_task({"task": "instrumental"}) == "instrumental"
     assert parse_task({"task": "vc"}) == "vc"
+    assert parse_task({"task": "speaking_faces"}) == "speaking_faces"
     with pytest.raises(InputError):
         parse_task({"task": "demucs"})
     with pytest.raises(InputError):
@@ -155,3 +158,26 @@ def test_deduction_opt_in_modal_et_runpod_inchanges(monkeypatch):
     monkeypatch.delenv("SPARK_JOBS_AUTO", raising=False)
     monkeypatch.setenv("SPARK_JOBS_PER_GPU", "3")
     assert tasks.jobs_per_gpu("bs_roformer_leap_xe") == 3
+
+
+def test_speaking_faces_defaults():
+    r = parse_speaking_faces({"video_url": URL})
+    assert r.video_url == URL and r.audio_url is None and r.window is None
+    assert r.margin == 2.0 and r.output_url is None
+
+
+def test_speaking_faces_window():
+    r = parse_speaking_faces({"video_url": URL, "audio_url": URL, "start": 300, "end": 600, "margin": 1.5,
+                              "output_url": URL})
+    assert r.window == (300.0, 600.0) and r.margin == 1.5 and r.audio_url == URL and r.output_url == URL
+    assert parse_speaking_faces({"video_url": URL, "start": "0", "end": "5"}).window == (0.0, 5.0)
+    # `start` et `end` vont ensemble : un seul des deux ferait analyser toute la fin de la vidéo.
+    for mauvais in ({"start": 300}, {"end": 600}, {"start": -1, "end": 600}, {"start": 600, "end": 600},
+                    {"start": 600, "end": 300}, {"start": "abc", "end": 600}, {"start": True, "end": 600},
+                    {"start": 0, "end": MAX_WINDOW_S + 1}, {"margin": -1}, {"margin": 31}):
+        with pytest.raises(InputError):
+            parse_speaking_faces({"video_url": URL, **mauvais})
+    with pytest.raises(InputError):
+        parse_speaking_faces({})
+    with pytest.raises(InputError):
+        parse_speaking_faces({"video_url": URL, "audio_url": "ftp://x/y"})
