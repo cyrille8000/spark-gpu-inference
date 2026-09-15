@@ -87,8 +87,8 @@ Le 10 minutes n'est pas un rythme, c'est un **démarrage à froid**.
    démarre sans attendre la fin des 10 minutes (tranché le 2026-09-15).
 3. On démarre. À partir de là, **tout ce qui arrive est traité au fil de l'eau** : les
    workers piochent en continu, le bot ajuste la capacité en continu.
-4. Quand la file reste vide un certain temps, on repasse en sommeil. Le 10 minutes se
-   réarme au prochain job.
+4. Dès que la file d'attente est vide, tout worker qui n'a rien en main s'arrête. Quand le
+   dernier s'éteint, on dort ; le 10 minutes se réarme au prochain job.
 
 Le réveil vaut pour **toutes les tâches** : séparation, changement de voix lancé depuis
 le studio, visages. Seule la voie express y échappe (tranché le 2026-09-15).
@@ -97,8 +97,10 @@ En croisière, la règle du bot est de **garder la file courte au meilleur coût
 (proposition, question 1) :
 
 - **Modal, tant qu'il a du crédit** : la file doit rester à zéro. Le bot ouvre autant de
-  conteneurs qu'il faut pour vider ce qui attend dans le temps d'un démarrage (≈ 1 min),
-  jusqu'aux 60 cartes. Le crédit est dépensé dès qu'il y a du travail, sans réserve.
+  conteneurs qu'il faut pour que ce qui attend soit vidé dans le temps d'un démarrage après
+  leur arrivée (≈ 1 min, jamais moins qu'un job), et **jamais plus de places libres que de jobs
+  en file** : 1 job → 1 conteneur, 4 jobs → 2. Le crédit est dépensé dès qu'il y a du travail,
+  sans réserve.
 - **RunPod et Vast** : on démarre une machine de plus seulement si, **à son arrivée
   prévue**, il lui restera au moins `max(5 min, 3 × son démarrage facturé)` de travail.
   Le 5 min est la file tolérée (Doppler, même seuil que l'express) ; le ×3 garantit qu'un
@@ -135,22 +137,21 @@ vide avant qu'elle arrive, il l'annule tant que c'est gratuit.
 
 **Éteindre.** Un worker inactif coûte, à la seconde près, chez les trois. Sur Vast c'est
 la machine entière, toutes ses cartes, tant que le pod existe. Sur Vast, éteindre = détruire
-par l'API, sinon le disque se paie encore. **Grâce et sommeil** (proposition, question 2) :
+par l'API, sinon le disque se paie encore.
 
-- la **grâce** d'un worker inactif = **ce que coûterait le redémarrer**, en secondes de sa
-  propre facturation, telle que le bot l'a observée chez cet hébergeur : ≈ 1 min sur Modal,
-  20-30 s à chaud et jusqu'à 8 min à froid sur RunPod, 20 s sur Vast si l'image est en cache.
-  Plancher 1 min, plafond 10 min (Doppler). Attendre exactement le prix d'un redémarrage
-  est la règle classique du « louer ou acheter » : quoi qu'il arrive ensuite, on ne paie
-  jamais plus du double de l'optimal, sans rien prédire. Le bot n'a donc pas à deviner le
-  rythme des arrivées ; s'il sait qu'un job arrive (projet en cours de découpe), il prolonge.
-- entre plusieurs workers inactifs, on coupe **le plus cher par place d'abord** ; un Modal
-  gratuit est le dernier à partir.
-- **le dernier worker vivant** attend plus longtemps : **5 min** (Doppler). Le garder évite
-  aux jobs de traîne (une conversion relancée depuis le studio, la fin d'un découpage) de
-  retomber dans les 10 min du réveil, pour quelques centimes. De préférence un Modal.
-- **le sommeil n'a pas d'horloge à lui** : dormir, c'est n'avoir plus aucun worker et une
-  file vide. Quand le dernier worker s'éteint, on dort ; le prochain job réarme les 10 min.
+- **File d'attente vide : tout s'arrête, tout de suite** (tranché le 2026-09-15). Tout worker
+  qui n'a rien en main reçoit l'arrêt, le dernier compris, même si d'autres finissent encore
+  leurs jobs ; ceux-là s'arrêtent à leur tour en finissant. Un démarrage en route est annulé.
+  Mesuré au banc : le dernier worker s'éteint 20 s (un tick) après le dernier job.
+- **Une seule exception** : un arrêt net en cours. Ses jobs abandonnés vont revenir en file,
+  la cible de la coupe les attend.
+- **La grâce** (le prix d'un redémarrage observé, 1 à 10 min) ne joue plus que dans un cas
+  rare : la file ne contient que des jobs que ce worker a déjà ratés et ne peut pas reprendre.
+- **Conséquence assumée** : sur un flux clairsemé (un job toutes les 3 min), chaque job trouve
+  tout éteint et repasse par le réveil. Mesuré : attente moyenne ≈ 7 min contre ≈ 2 min sur un
+  flux d'un job par minute. Le réglage du réveil (`SPARK_GPU_REVEIL_S`) est le curseur.
+- **Le sommeil n'a pas d'horloge à lui** : dormir, c'est n'avoir plus aucun worker et une
+  file vide ; le prochain job réarme les 10 min.
 
 **Couper.** Un worker cher qui n'a plus qu'un job, et un worker moins cher déjà
 allumé et libre ? Garder coûte `prix × temps restant` ; déplacer coûte
@@ -360,7 +361,7 @@ le bot se teste de bout en bout sans allumer une seule carte.
 `SPARK_GPU_SCHEDULER_ENABLED` (false — bascule les enfants sur la file), `SPARK_GPU_SCHEDULER_PAUSE`,
 `SPARK_GPU_CLAIM_SECRET` (sinon `UPLOAD_JWT_SECRET`), `SPARK_GPU_REVEIL_S` (600),
 `SPARK_GPU_REVEIL_ANTICIPE_GPU_S` (1800), `SPARK_GPU_FILE_CIBLE_S` (300), `SPARK_GPU_FACTEUR_DEMARRAGE` (3),
-`SPARK_GPU_EXPRESS_MAX_S` (300), `SPARK_GPU_GRACE_MIN_S`/`MAX_S`/`DERNIER_S` (60/600/300), `SPARK_GPU_BUDGET_S` (17 700),
+`SPARK_GPU_EXPRESS_MAX_S` (300), `SPARK_GPU_GRACE_MIN_S`/`MAX_S` (60/600), `SPARK_GPU_BUDGET_S` (17 700),
 `SPARK_GPU_MORT_S` (900), `SPARK_GPU_SOLDE_MIN_USD` (2) ; Modal : `SPARK_GPU_MODAL_ENDPOINT_URLS`, `_API_KEY`,
 `_MAX_CONCURRENT` (10), `_BUDGET_USD` (29) ; RunPod : `SPARK_GPU_RUNPOD_API_KEY`, `_PRISE_ENDPOINT_ID`
 (sinon `_ENDPOINT_ID`), `_MAX_WORKERS` (20), `_CARTES` (4), `_PRICE_PER_HOUR` (2,76) ; Vast :
@@ -388,8 +389,9 @@ lire l'URL de prise du worker que le bot a créé dans `/status` (journal), et l
 
 ## Ce que je te demande de trancher
 
-Rien : les deux propositions (croisière et grâce) ont été acceptées le 2026-09-15 et
-sont écrites telles quelles. Reste à faire, dans l'ordre : mettre les clés et réglages dans
+Rien : la croisière est acceptée telle quelle ; pour la grâce, le propriétaire a tranché
+plus simple le 2026-09-15 — file d'attente vide, tout s'arrête tout de suite, plus de
+« dernier worker gardé 5 min ». Reste à faire, dans l'ordre : mettre les clés et réglages dans
 Doppler, déployer le backend (le bot dort tant que la file est vide), tester avec le faux
 worker, déployer les images (Modal `timeout` 5 h, endpoint RunPod de prise à 5 h, image Vast
 par empreinte), puis passer `SPARK_GPU_SCHEDULER_ENABLED` à true.
