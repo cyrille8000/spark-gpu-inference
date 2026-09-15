@@ -69,6 +69,25 @@ couper un worker coûte au pire un job.
 
 ---
 
+## Le rythme : des lots de 10 minutes
+
+Les demandes des utilisateurs ne partent pas une à une. Quand un utilisateur demande,
+ses jobs sont créés et posés dans la file. **Toutes les 10 minutes**, le bot prend tout
+ce qui s'est accumulé et lance le traitement du lot.
+
+Ce que ça donne :
+
+- le bot **planifie un lot entier** : il connaît le nombre de jobs, les tâches, les
+  durées de média, et achète d'un coup la capacité pour finir le lot **avant le lot
+  suivant** — c'est la cible d'attente ;
+- en cours de lot il ne fait que corriger : rajouter si ça traîne, couper si ça va
+  plus vite que prévu ;
+- entre deux lots il décide qui reste chaud : Modal oui (crédit gratuit), RunPod et
+  Vast seulement si 10 min d'attente coûtent moins qu'un redémarrage ;
+- un job posé pendant un lot attend le tick suivant.
+
+---
+
 ## Ce que décide le bot
 
 Trois décisions, une seule règle : **des dollars contre des dollars**.
@@ -190,8 +209,10 @@ le bot se teste de bout en bout sans allumer une seule carte.
 
 ## Ce que je te demande de trancher
 
-1. **Cible d'attente** : combien de temps un job peut rester en file avant qu'on paie une machine de plus ? (ou : le coût seul décide, sans cible)
-2. **Période de grâce** d'un worker inactif : fixée par fournisseur, ou calculée par le bot d'après le rythme des arrivées ?
+1. **Cible d'attente** : un lot doit-il toujours finir dans ses 10 minutes, ou le coût peut-il primer et laisser déborder ?
+2. **Période de grâce** d'un worker inactif entre deux lots : fixée par fournisseur, ou calculée par le bot d'après les lots précédents ?
+7. **Le lot vaut pour toutes les tâches** (y compris le changement de voix lancé depuis le studio), ou certaines partent tout de suite ?
+8. **Les 10 minutes sont fixes** (cron), ou le bot peut déclencher plus tôt quand le lot est déjà gros ?
 3. **Durée max d'un job** : 2 minutes de GPU te va ?
 4. **Crédit Modal** : on le dépense dès qu'il y a du travail, sans le garder en réserve ?
 5. **Plafond Vast par jour**, en dollars.
