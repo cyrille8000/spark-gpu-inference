@@ -96,8 +96,12 @@ class Sortie(Exception):
         self.code = code
 
 
-def _prepare(monkeypatch, serveur, cartes, duree=0.0, durees_par_job=None):
+def _prepare(monkeypatch, serveur, cartes, duree=0.0, durees_par_job=None, places=2):
     monkeypatch.setattr(service, "_demander", serveur)
+    # Les tests de MECANIQUE (boucle, attente, arret, rendus) raisonnent sur 2 places par
+    # carte ; seuls les tests de capacite passent `places=None` pour la vraie regle memoire.
+    if places is not None:
+        monkeypatch.setattr(service, "places_prise", lambda vram: places)
     monkeypatch.setattr(tasks.registry, "vram_total_gb", lambda: 24.0)
     monkeypatch.setattr(registry, "vram_gb", lambda c: 24.0)
     # `vast_worker.py` pose SPARK_PROVIDER=vastai a l'import, et pytest importe TOUS les
@@ -122,13 +126,13 @@ def _prepare(monkeypatch, serveur, cartes, duree=0.0, durees_par_job=None):
 
 
 def test_la_capacite_suit_les_cartes_trouvees(monkeypatch):
-    """Quatre cartes tiennent huit places, trois en tiennent six. C'est LE point : le
-    serveur n'a pas a deviner ce que l'hebergeur a livre."""
-    for cartes, attendu in ((["cuda:0", "cuda:1", "cuda:2", "cuda:3"], 8),
-                            (["cuda:0", "cuda:1", "cuda:2"], 6),
-                            (["cuda:0"], 2)):
+    """Quatre cartes de 24 Go tiennent vingt places, trois en tiennent quinze. C'est LE
+    point : le serveur n'a pas a deviner ce que l'hebergeur a livre."""
+    for cartes, attendu in ((["cuda:0", "cuda:1", "cuda:2", "cuda:3"], 20),
+                            (["cuda:0", "cuda:1", "cuda:2"], 15),
+                            (["cuda:0"], 5)):
         srv = FauxServeur(0)
-        _prepare(monkeypatch, srv, cartes)
+        _prepare(monkeypatch, srv, cartes, places=None)
         out = service.process_pull({"claim_url": "https://serveur/prise?sig=x"}, "w1")
         assert out["places"] == attendu, f"{len(cartes)} cartes -> {out['places']}"
         assert srv.demandes[0]["places"] == attendu
@@ -137,24 +141,26 @@ def test_la_capacite_suit_les_cartes_trouvees(monkeypatch):
 
 
 def test_le_worker_decide_ses_places_d_apres_chaque_carte(monkeypatch):
-    """Moins de 24 Go : une place ; 24 Go et plus : deux. Decide par le worker, carte par
-    carte, sans consigne du serveur — et une machine melangee compte juste."""
+    """Les places suivent la memoire de CHAQUE carte (16 Go → 3, 24 Go → 5, 48 Go → 10).
+    Decide par le worker, carte par carte, sans consigne du serveur — et une machine
+    melangee compte juste."""
     srv = FauxServeur(0)
-    _prepare(monkeypatch, srv, ["cuda:0", "cuda:1"])
+    _prepare(monkeypatch, srv, ["cuda:0", "cuda:1"], places=None)
     monkeypatch.setattr(registry, "vram_gb", lambda c: 17.2)
     out = service.process_pull({"claim_url": "https://serveur/prise?sig=x"}, "w1c")
-    assert out["places"] == 2, "deux cartes de 16 Go = deux places, pas quatre"
-    assert srv.demandes[0]["places_par_carte"] == {"cuda:0": 1, "cuda:1": 1}
+    assert out["places"] == 6, "deux cartes de 16 Go = trois places chacune"
+    assert srv.demandes[0]["places_par_carte"] == {"cuda:0": 3, "cuda:1": 3}
     srv = FauxServeur(0)
-    _prepare(monkeypatch, srv, ["cuda:0", "cuda:1"])
-    monkeypatch.setattr(registry, "vram_gb", lambda c: {"cuda:0": 17.2, "cuda:1": 25.3}[c])
+    _prepare(monkeypatch, srv, ["cuda:0", "cuda:1"], places=None)
+    monkeypatch.setattr(registry, "vram_gb", lambda c: {"cuda:0": 17.2, "cuda:1": 50.8}[c])
     out = service.process_pull({"claim_url": "https://serveur/prise?sig=x"}, "w1d")
-    assert out["places"] == 3 and srv.demandes[0]["places_par_carte"] == {"cuda:0": 1, "cuda:1": 2}
+    assert out["places"] == 13 and srv.demandes[0]["places_par_carte"] == {"cuda:0": 3, "cuda:1": 10}
     # Le serveur ne peut que plafonner, jamais relever.
     srv = FauxServeur(0)
-    _prepare(monkeypatch, srv, ["cuda:0"])
+    _prepare(monkeypatch, srv, ["cuda:0"], places=None)
     assert service.process_pull({"claim_url": "https://serveur/prise?sig=x", "jobs_par_carte": 1}, "w1e")["places"] == 1
-    assert service.process_pull({"claim_url": "https://serveur/prise?sig=x", "jobs_par_carte": 5}, "w1f")["places"] == 2
+    assert service.process_pull({"claim_url": "https://serveur/prise?sig=x", "jobs_par_carte": 3}, "w1f")["places"] == 3
+    assert service.process_pull({"claim_url": "https://serveur/prise?sig=x", "jobs_par_carte": 50}, "w1g")["places"] == 5
 
 
 def test_l_identite_voyage_avec_chaque_demande(monkeypatch):

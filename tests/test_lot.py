@@ -89,12 +89,18 @@ def test_places_calculees_sur_la_tache_la_plus_gourmande(monkeypatch):
     assert tasks.places_pour_taches(["quoi"]) == 1
 
 
-def test_une_carte_de_16_a_22_go_ne_tient_qu_une_place():
-    """Decision du 2026-09-15 : ces cartes sont acceptees sur Vast mais jamais empilees."""
-    for vram in (17.2, 20.0, 21.5, 22.9):
-        for modele in ("bs_roformer_leap_xe", "chatterbox_vc", "lr_asd"):
-            assert tasks.jobs_pour_vram(modele, vram) == 1, (modele, vram)
-    assert tasks.jobs_pour_vram("bs_roformer_leap_xe", 23.66) == 5   # L4 : la formule reprend
+def test_les_places_de_prise_suivent_la_memoire_de_la_carte():
+    """Decision du 2026-09-15 : proportionnel a la memoire, de 16 Go a plus de 100 Go, sur
+    la tache la plus gourmande (la separation). Plus de regle « 1 sous 24 Go, 2 au-dessus »."""
+    # Go tels que torch les rapporte : « 16 Go » 17,2 ; L4 23,66 ; 3090 25,3 ; « 48 Go » 50,8 ; A100 85,1 ; PRO 6000 102
+    attendu = {17.2: 3, 23.66: 5, 25.3: 5, 50.8: 10, 85.1: 18, 102.0: 22}
+    for vram, n in attendu.items():
+        assert tasks.places_prise(vram) == n, (vram, tasks.places_prise(vram))
+    # la separation borne : une conversion vocale seule en tiendrait davantage
+    assert tasks.jobs_pour_vram("chatterbox_vc", 17.2) == 6
+    assert tasks.jobs_pour_vram("bs_roformer_leap_xe", 17.2) == 3
+    # jamais moins d'une place, et la memoire illisible en donne une
+    assert tasks.places_prise(8.0) == 1 and tasks.places_prise(None) == 1
     assert tasks.jobs_pour_vram("chatterbox_vc", 17.2, force="3") == 3   # le serveur peut forcer
 
 

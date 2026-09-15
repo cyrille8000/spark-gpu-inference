@@ -58,9 +58,16 @@ chaque job son temps d'inférence à part : c'est lui qui nourrit le débit par 
 
 ## Ce que fait un worker, et rien d'autre
 
-- Il compte ses cartes et lit la mémoire de chacune : **moins de 24 Go, une place ; 24 Go
-  et plus, deux**. C'est lui qui décide, pas le serveur, et la règle est la même chez les
-  trois hébergeurs. Il garde ses places pleines.
+- Il compte ses cartes et lit la mémoire de chacune : **ses places suivent sa mémoire**,
+  calculées sur la tâche la plus gourmande (la séparation) — 16 Go → 3, 24 Go → 5,
+  48 Go → 10, 80 Go → 18, 102 Go → 22 (tranché le 2026-09-15 : le travail est asynchrone,
+  on remplit la carte plutôt que de chercher la vitesse d'un job). C'est lui qui décide,
+  pas le serveur, et la règle est la même chez les trois hébergeurs. Il garde ses places
+  pleines.
+- **Une carte pleine ne va pas plus vite.** Mesuré sur deux cartes de 48 Go : k jobs en
+  même temps sur une carte rendent ×1 ; ×1,12 à 2 ; ×1,20 à 4 ; ×1,23 à 6 et au-delà. Les
+  places achètent de la capacité d'accueil, pas du débit : le bot compte le débit d'une
+  machine comme cartes × gain(jobs par carte) × vitesse de la carte, jamais comme ses places.
 - Il **ne sort jamais de lui-même**. File vide : il attend `attente_s` et redemande.
 - Il obéit à `arret` : `doux` = finir ce qui tourne puis sortir ; `net` = rendre ce
   qui est fini, déclarer ce qu'il abandonne, sortir tout de suite.
@@ -99,14 +106,20 @@ En croisière, la règle du bot est de **garder la file courte au meilleur coût
 - **Modal, tant qu'il a du crédit** : la file doit rester à zéro. Le bot ouvre autant de
   conteneurs qu'il faut pour que ce qui attend soit vidé dans le temps d'un démarrage après
   leur arrivée (≈ 1 min, jamais moins qu'un job), et **jamais plus de places libres que de jobs
-  en file** : 1 job → 1 conteneur, 4 jobs → 2. Le crédit est dépensé dès qu'il y a du travail,
+  en file** : un L4 tient 5 places, donc 5 jobs → 1 conteneur, 12 jobs → 3. Le crédit est dépensé dès qu'il y a du travail,
   sans réserve.
 - **RunPod et Vast** : on démarre une machine de plus seulement si, **à son arrivée
-  prévue**, il lui restera au moins `max(5 min, 3 × son démarrage facturé)` de travail.
-  Le 5 min est la file tolérée (Doppler, même seuil que l'express) ; le ×3 garantit qu'un
-  démarrage payé ne dépasse jamais un quart de ce que la machine produit. Une machine
-  RunPod froide (8 min facturés) exige donc 24 min de travail devant elle ; une machine
-  Vast qui a l'image (20 s) part pour 5 min de file.
+  prévue**, trois conditions tiennent :
+  1. au moins **5 min de travail par carte louée** (la file tolérée, Doppler) — trois jobs
+     ne paient jamais une machine ;
+  2. au moins **3 × son démarrage facturé** de travail réel pour elle : un démarrage payé ne
+     dépasse jamais un quart de ce qu'elle produit. Une machine RunPod froide (8 min
+     facturés) exige 24 min de travail ; une machine Vast qui a l'image (20 s), 1 min ;
+  3. au moins **la moitié de son débit** utile : ni une grosse machine pour une petite
+     demande, ni une petite de plus pour gagner quelques secondes.
+  Jusqu'au 2026-09-15 la règle était « au moins max(5 min, 3 × démarrage) de travail pour
+  la machine entière » : avec des places proportionnelles, elle refusait une machine à 4
+  cartes pour 20 jobs (trop rapide !) et en louait trois à une carte, plus chères.
 - **Couper** : dès que le vidage prévu repasse sous la cible sans elle, la machine la plus
   chère par place passe en grâce (ci-dessous), puis s'éteint.
 
@@ -189,7 +202,7 @@ peut exécuter, quel que soit le nom de la carte :
 |---|---|---|
 | capacité de calcul | ≥ 7,5 | les roues torch 2.7.1 + CUDA 12.8 (un V100 est refusé, même sur pilote récent) |
 | pilote `cuda_max_good` | ≥ 12.8 | l'image embarque CUDA 12.8 |
-| VRAM par carte | ≥ 16 Go | de 16 à 22 Go la carte ne tient qu'**une place** (tranché le 2026-09-15) ; à partir de 24 Go la mémoire décide du nombre de places |
+| VRAM par carte | ≥ 16 Go | la mémoire décide du nombre de places (16 Go → 3, 24 Go → 5, 48 Go → 10) ; le débit, lui, suit la courbe mesurée |
 | cœurs CPU | plancher 4, puis facteur de coût | le décodage et l'encodage tournent sur CPU ; en dessous la carte dort |
 | débit réseau | plancher 500 Mb/s, puis facteur de coût | 13 Mo par job (0,2 s à 500 Mb/s) ; le tirage de l'image passe de 20 s à 85 s, c'est du temps de démarrage, pas de la qualité |
 | disque | ≥ 15 Go | l'image fait 5,3 Go compressés |
@@ -235,18 +248,21 @@ offre, le bot calcule, **au moment où elle arriverait** :
    les emplacements restants, réclame plus de places qu'une machine n'en a, elle gaspille un
    emplacement : elle est classée plus chère d'autant.
 
-La moins chère gagne ; à 5 % près, la plus grosse. Elle doit aussi passer la règle de
-rentabilité (assez de travail pour elle à son arrivée). Mesuré au banc, avec des cartes seules
-à 0,11 $/h et des machines de 8 cartes à 0,12 $/h la carte :
+La moins chère gagne ; à 5 % près, la plus grosse. La pénalité d'emplacements ne joue
+qu'entre machines d'un même hébergeur : entre Vast et RunPod, seul le coût par job réel
+compte. Elle doit aussi passer la règle de rentabilité ci-dessus. Le débit d'une machine est
+compté cartes × gain(jobs par carte) × vitesse, jamais ses places.
 
-| Demande | Avant | Maintenant |
-|---|---|---|
-| 20 jobs | 1 machine à 1 carte | 1 machine à 1 carte |
-| 60 jobs | 5 machines à 1 carte | 1 à 4 cartes + 1 à 1 carte |
-| 150 jobs | 5 à 1 carte + 1 à 8 | 1 à 8 + 1 à 4 + 1 à 2 |
-| 300 jobs | 10 machines, dont 7 à 1 carte | 3 à 8 cartes + 1 à 4 |
+Mesuré au banc le 2026-09-15 (places proportionnelles, cartes seules à 0,11 $/h, machines
+de 8 cartes à 0,12 $/h la carte, 10 machines Vast au plus) :
 
-Le coût payé varie de moins de 5 %. `SPARK_GPU_COUT_FIXE_MACHINE_USD` est le curseur : à 0, le
+| Demande | Machines louées | Payé | Attente max |
+|---|---|---|---|
+| 20 jobs | 1 à 4 cartes | 0,04 $ | 14 min (dont 10 de réveil) |
+| 60 jobs | 1 à 8 cartes + 1 à 2 cartes | 0,11 $ | 6 min |
+| 150 jobs | 3 à 8 cartes | 0,26 $ | 7 min |
+| 300 jobs | 3 à 8 cartes d'abord, puis le reste jusqu'au plafond | 0,48 $ | 8 min |
+ `SPARK_GPU_COUT_FIXE_MACHINE_USD` est le curseur : à 0, le
 bot ne regarde plus que le prix par carte.
 
 ---

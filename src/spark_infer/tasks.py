@@ -115,22 +115,25 @@ MARGE = 0.85
 # cinq. Si un hébergeur coupe un job trop long (900 s chez Modal), c'est à LUI de
 # baisser le plafond par `SPARK_JOBS_MAX`, pas à la table de le faire pour tout le monde.
 PLAFOND_DEFAUT = 32
-# Cartes de 16 a 22 Go : UNE place, quelle que soit la tache (decision du proprietaire,
-# 2026-09-15 : elles sont acceptees sur Vast, on ne les empile pas). Seuil en Go tels que
-# torch les rapporte (total_memory / 1e9) : une carte « 24 Go » en annonce 23,6 a 25,4
-# (L4 23,66, 3090 25,3), une « 16 Go » 17,2, une « 20 Go » 21,5.
-VRAM_UNE_PLACE_GB = 23.0
-# En PRISE, le worker decide seul ses places d'apres CHAQUE carte (decision du proprietaire,
-# 2026-09-15 : pas de consigne par defaut du serveur, pas de version par hebergeur) :
-# moins de 24 Go → 1 job par carte, 24 Go et plus → 2. Le serveur ne peut que plafonner.
-PLACES_PRISE_24GO = 2
 
 
 def places_prise(vram_gb: float | None) -> int:
-    """Places qu'UNE carte ouvre en prise, d'apres sa memoire. Pur."""
-    if not vram_gb or vram_gb < VRAM_UNE_PLACE_GB:
-        return 1
-    return PLACES_PRISE_24GO
+    """Places qu'UNE carte ouvre en PRISE : PROPORTIONNELLES A SA MEMOIRE (decision du
+    proprietaire, 2026-09-15), de 16 Go a plus de 100 Go, sans plafond arbitraire.
+
+    Le travail arrive de maniere asynchrone : on ne cherche pas la vitesse d'un job, on
+    cherche le cout par job. Une carte tient donc autant de jobs que sa memoire le permet,
+    calcule sur la tache la PLUS GOURMANDE (le worker ne sait pas d'avance ce que la file
+    lui donnera) — aujourd'hui la separation : 16 Go → 3, 24 Go → 5, 48 Go → 10,
+    80 Go → 18, 102 Go → 22.
+
+    Ce qu'il faut garder en tete (mesure du 2026-09-15, cartes de 48 Go) : au-dela de ~6
+    jobs sur UNE carte le debit ne monte plus (×1,23), chaque job s'allonge. Les places en
+    plus achetent de la CAPACITE D'ACCUEIL, pas de la vitesse — c'est l'ordonnanceur qui en
+    tient compte dans son calcul de debit. Remplace l'ancienne regle (1 place sous 24 Go,
+    2 au-dessus). Le serveur peut toujours plafonner (`jobs_par_carte`). Pur.
+    """
+    return min(jobs_pour_vram(m, vram_gb) for m in MODELE_DE_TACHE.values())
 
 
 def jobs_pour_vram(modele: str, vram_gb: float | None, force: str | None = None,
@@ -149,8 +152,6 @@ def jobs_pour_vram(modele: str, vram_gb: float | None, force: str | None = None,
         except ValueError:
             pass
     if not vram_gb or vram_gb <= 0:
-        return 1
-    if vram_gb < VRAM_UNE_PLACE_GB:
         return 1
     base, par_job = COUT_MEMOIRE_GB.get(modele, COUT_INCONNU_GB)
     reste = vram_gb * MARGE - base

@@ -32,8 +32,8 @@ ENV SPARK_PROVIDER=vastai \
     # job, une séparation 4,8). Posé à la location, il force la valeur.
     SPARK_JOBS_PER_GPU= \
     SPARK_JOBS_AUTO=1 \
-    # Une carte de moins de 16 Go est refusée au démarrage, avant tout job. Entre 16 et
-    # 22 Go elle est acceptée mais ne tient qu'UNE place (tasks.VRAM_UNE_PLACE_GB).
+    # Une carte de moins de 16 Go est refusée au démarrage, avant tout job. Au-dessus, ses
+    # places suivent sa mémoire (tasks.places_prise : 16 Go → 3, 24 Go → 5, 48 Go → 10).
  \
     # Un pod loué et oublié coûte : sans job pendant ce temps, le worker s'arrête.
     SPARK_IDLE_EXIT_S=900

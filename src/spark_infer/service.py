@@ -32,11 +32,11 @@ MAX_SOUS_JOBS = 256
 
 # ── MODE PRISE (`claim_url`) ──────────────────────────────────────────────────
 # Jobs pris PAR CARTE : LE WORKER DÉCIDE SEUL, d'après la mémoire de CHAQUE carte
-# (`tasks.places_prise` : moins de 24 Go → 1, 24 Go et plus → 2). Décision du
-# propriétaire, 2026-09-15 : c'est la machine qui sait ce qu'elle a, pas le serveur,
-# et la même règle vaut chez les trois hébergeurs. `jobs_par_carte` envoyé par le
-# serveur ne peut que PLAFONNER. Deux plutôt que cinq sur 24 Go (la mémoire le
-# permettrait) : marge confortable et capacité lisible.
+# (`tasks.places_prise` : PROPORTIONNEL à la mémoire, sur la tâche la plus gourmande —
+# 16 Go → 3, 24 Go → 5, 48 Go → 10, 102 Go → 22). Décisions du propriétaire du
+# 2026-09-15 : c'est la machine qui sait ce qu'elle a, la même règle vaut chez les trois
+# hébergeurs, et le travail étant asynchrone on remplit la carte plutôt que de chercher
+# la vitesse d'un job. `jobs_par_carte` envoyé par le serveur ne peut que PLAFONNER.
 # LE WORKER NE SORT PLUS SUR FILE VIDE (décision du propriétaire, 2026-09-15). Avant,
 # une prise vide le faisait sortir pour ne pas payer l'attente. Désormais c'est
 # l'ORDONNANCEUR qui monte et qui descend : les hébergeurs sont réglés avec des
@@ -194,6 +194,9 @@ def _resume(r: dict) -> dict:
         # L'ordonnanceur apprend le débit sur l'INFÉRENCE seule (hors transferts) et
         # vérifie le dépôt : `inference_s`, `uploaded`, `bytes`, `gpu_name`, `timings`.
         "inference_s": timings.get("inference_s"), "timings": timings,
+        # Combien de jobs se sont croisés sur la carte pendant celui-ci : l'inférence
+        # s'allonge avec eux, l'ordonnanceur en a besoin pour apprendre la vraie vitesse.
+        "jobs_croises": (r.get("gpu_mem") or {}).get("jobs") if isinstance(r.get("gpu_mem"), dict) else None,
         "uploaded": r.get("uploaded"), "gpu_name": r.get("gpu_name"),
         "device": r.get("device"), "bytes": r.get("bytes"), "meta": r.get("meta"),
     }
