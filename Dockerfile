@@ -40,8 +40,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # sans lui perth.PerthImplicitWatermarker vaut None et ChatterboxVC ne se construit plus.
 
 # ---------------------------------------------------------------- [2/5] PyTorch 2.7.1 — CUDA 12.8 (noyaux sm_50 → sm_120)
-# cu128 obligatoire : le pool 24 GB de RunPod sert des RTX PRO 6000 Blackwell (MIG, sm_120), que cu124 ne sait pas
-# exécuter (« no kernel image is available »). chatterbox-tts épingle torch 2.6.0 mais est installé --no-deps.
+# cu128 obligatoire : Vast loue des Blackwell (RTX 5090, RTX PRO, sm_120), sa famille la plus nombreuse, que cu124/cu126
+# ne savent pas exécuter (« no kernel image is available »). RunPod (RTX 4090) et Modal (L4) n'en ont pas besoin. chatterbox-tts épingle torch 2.6.0 mais est installé --no-deps.
 RUN pip install torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128 \
     && python -c "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
 

@@ -187,7 +187,7 @@ on coupe. Un job coupé une fois ne l'est plus jamais.
 | | Modal | RunPod | Vast.ai |
 |---|---|---|---|
 | Prix | **0 tant qu'il reste du crédit** (6 comptes × 30 $/mois, renouvelé), dépensé dès qu'il y a du travail, sans réserve (tranché) | réel, à la seconde | prix de l'offre, à la seconde, machine entière |
-| Capacité | 10 cartes par compte, 1 carte par worker | 20 workers × 4 cartes | sans plafond ; machines de 1 à 12 cartes et plus, **aucune taille exclue** |
+| Capacité | 10 cartes par compte, 1 carte par worker | 20 machines, chacune **4 × RTX 4090 à 4,40 $/h la machine** (1,10 $/h la carte) | sans plafond ; machines de 1 à 12 cartes et plus, **aucune taille exclue** |
 | Démarrage | ~1 min, **facturé** (sur le crédit) | 20-30 s à chaud, jusqu'à 8 min à froid, **facturé** | 20 s si l'image est en cache, sinon minutes, **facturé** ; bande passante du tirage en plus |
 | Éteindre | `cancel` | `cancel` ; sinon idle timeout | `destroy` par l'API |
 | Ce que le bot surveille | crédit restant du mois | **solde lu par l'API**, temps de démarrage observés | **solde lu par l'API**, machines connues avec l'image en cache |
@@ -275,8 +275,8 @@ de 8 cartes à 0,12 $/h la carte, 10 machines Vast au plus) :
 | 150 jobs | 3 à 8 cartes + 1 à 1 carte | 0,26 $ | 5 min |
 | 300 jobs | 3 à 8 cartes d'abord, puis le reste jusqu'au plafond | 0,48 $ | 7 min |
 
-Face à la règle naïve (une machine RunPod par 40 jobs) : 0 $ contre 4,03 $ pour 100 jobs avec
-le crédit Modal, 2,71 $ contre 11,01 $ pour 300 jobs sur RunPod seul.
+Face à la règle naïve (une machine RunPod par 40 jobs, 4 × RTX 4090 à 4,40 $/h) : 0 $ contre
+6,43 $ pour 100 jobs avec le crédit Modal, 4,33 $ contre 17,55 $ pour 300 jobs sur RunPod seul.
  `SPARK_GPU_COUT_FIXE_MACHINE_USD` est le curseur : à 0, le
 bot ne regarde plus que le prix par carte.
 
@@ -423,7 +423,8 @@ le bot se teste de bout en bout sans allumer une seule carte.
 `SPARK_GPU_EXPRESS_MAX_S` (300), `SPARK_GPU_GRACE_MIN_S`/`MAX_S` (60/600), `SPARK_GPU_BUDGET_S` (17 700),
 `SPARK_GPU_MORT_S` (900), `SPARK_GPU_SOLDE_MIN_USD` (2), `SPARK_GPU_COUT_FIXE_MACHINE_USD` (0,02), `SPARK_GPU_VAST_IMAGE_GB` (5,34) ; Modal : `SPARK_GPU_MODAL_ENDPOINT_URLS`, `_API_KEY`,
 `_MAX_CONCURRENT` (10), `_BUDGET_USD` (29) ; RunPod : `SPARK_GPU_RUNPOD_API_KEY`, `_PRISE_ENDPOINT_ID`
-(sinon `_ENDPOINT_ID`), `_MAX_WORKERS` (20), `_CARTES` (4), `_PRICE_PER_HOUR` (2,76) ; Vast :
+(sinon `_ENDPOINT_ID`), `_MAX_WORKERS` (20), `_GPU` (NVIDIA GeForce RTX 4090), `_CARTES` (4), `_PRICE_PER_HOUR`
+(par défaut cartes × `runpod:4090` de `SPARK_GPU_PRICES` = 4,40) ; Vast :
 `SPARK_GPU_VAST_API_KEY`, `_IMAGE` (par empreinte), `_MAX_WORKERS` (10), `_DISK_GB` (20), `_VRAM_MIN_MB` (16 000),
 `_CUDA_MIN` (12.8), `_CPU_MIN` (4), `_INET_MIN_MBPS` (500), `_FIABILITE_MIN` (0,8) ; `SPARK_GPU_PRICES` (table existante).
 
@@ -435,9 +436,9 @@ règle naïve (une machine RunPod par 40 jobs, arrêt à 15 min) :
 
 | Scénario | Bot | Naïf |
 |---|---|---|
-| 100 portions, crédit Modal | 0 $ payé (1,63 $ de crédit, dont 0,27 $ pour démarrer 20 conteneurs), attente max 7 min | 4,03 $ |
-| 300 portions, RunPod seul (démarrage 8 min) | 2,71 $, deux machines, attente max 30 min | 11,01 $, attente max 15 min |
-| 300 portions, Vast (image en cache) + RunPod | 0,25 $, une machine Vast, 25 min | 9,87 $ |
+| 100 portions, crédit Modal | 0 $ payé (1,63 $ de crédit, dont 0,27 $ pour démarrer 20 conteneurs), attente max 7 min | 6,43 $ |
+| 300 portions, RunPod seul (4 × RTX 4090 à 4,40 $/h, démarrage 8 min) | 4,33 $, deux machines, attente max 30 min | 17,55 $, attente max 15 min |
+| 300 portions, Vast (image en cache) + RunPod | 0,41 $, trois machines Vast, attente max 27 min | 17,55 $ |
 
 Le bot est toujours moins cher ; sur du payant à démarrage lent il est plus lent (une seule
 machine, la règle des 3 × démarrage) — `SPARK_GPU_FACTEUR_DEMARRAGE` règle ce curseur.

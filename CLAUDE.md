@@ -121,7 +121,7 @@ Détails du contrat : [README.md](README.md).
   en mémoire = pas de 2e essai (2026-09-11 : un rejeu a coûté 15 min d'L4 pour rien). Tout résultat, échec compris,
   porte `gpu_name` et `device` — la plateforme facture au vrai GPU.
 - **Pins.** setuptools < 82 (resemble-perth importe `pkg_resources`, supprimé en 82 ; sinon le filigrane Chatterbox
-  vaut None), torch/torchaudio 2.7.1 **cu128** (le pool 24 GB RunPod sert des Blackwell sm_120 que cu124 ne sait pas exécuter ;
+  vaut None), torch/torchaudio 2.7.1 **cu128** (Vast loue des Blackwell sm_120 (RTX 5090, RTX PRO), sa famille la plus nombreuse, que cu124/cu126 ne savent pas exécuter ; RunPod ne sert plus que des RTX 4090 ;
   chatterbox-tts 0.1.7 épingle 2.6.0 mais est installé --no-deps), numpy < 2, bs-roformer-infer épinglé sur
   le commit GitHub `b0f1386f` (la roue PyPI 0.1.5 n'a ni l'entrée Leap ni `mlp_expansion_factor`).
   chatterbox-tts est installé `--no-deps` pour ne pas embarquer gradio ; ses dépendances sont listées dans

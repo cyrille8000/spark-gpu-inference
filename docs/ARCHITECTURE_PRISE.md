@@ -163,7 +163,8 @@ délai, à quarante-cinq secondes près — les idle timeouts et l'imprécision 
 chargement des modèles, idle timeout. Seule échappe l'attente pure avant qu'un worker
 soit attribué, et avec `scalerValue: 4` elle dure quatre secondes.
 
-Coût réel de cet endpoint : **2,76 $/h** pour quatre cartes. Un démarrage à froid de
+Coût réel de cet endpoint (pool 24 Go, à l'époque) : **2,76 $/h** pour quatre cartes. Depuis le
+2026-09-15, l'endpoint de prise ne sert que des machines à **4 × RTX 4090, 4,40 $/h la machine**. Un démarrage à froid de
 huit minutes y revient à 0,37 $ ; sur une configuration à huit cartes à 16 $/h, à
 2,13 $. Et chaque **nouveau tag invalide tous les caches** : réchauffer 13 workers
 coûte une fois le prix du tirage. L'image pèse 5,34 Go compressés, dont 1,17 Go de
@@ -174,8 +175,8 @@ modèles embarqués — les sortir vers un volume réseau les ferait sortir du t
 | | Tirage de l'image | Démarrage | À l'arrêt |
 |---|---|---|---|
 | RunPod | **payé** (vérifié sur facture) | payé | idle timeout, puis rien |
-| Vast.ai | **non payé** — « You are not charged when it says Loading » | payé | stockage tant que le pod existe |
-| Modal | non documenté | non documenté | scaledown, puis rien |
+| Vast.ai | **payé** (établi le 2026-09-15 ; on lisait « You are not charged when it says Loading »), plus sa bande passante | payé | stockage tant que le pod existe |
+| Modal | **payé** (établi le 2026-09-15) | payé | scaledown, puis rien |
 
 Chez Vast, seule la **destruction par l'API** arrête les frais : le stockage court
 « for every single second your instance exists », instance arrêtée comprise.
