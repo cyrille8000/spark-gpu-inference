@@ -294,6 +294,18 @@ class Battement:
         reprendre, puis on se tue, sinon on facturerait les cartes dans le vide."""
         mut = time.monotonic() - self._contact
         if mut > SILENCE_NET_S:
+            if os.environ.get("SPARK_PROVIDER", "") == "vastai":
+                # Sur Vast, se tuer ne sert à rien : le conteneur est RELANCÉ en boucle
+                # (mesuré le 2026-09-12, toutes les 12 s, facturé) et le pod existe
+                # toujours. Seule la destruction par l'API arrête les frais, et la clé
+                # du compte n'a rien à faire sur une machine inconnue. On se tait donc :
+                # on ne prend plus rien, et le balai du serveur détruira le pod dès qu'il
+                # sera de retour.
+                if self.arret != "silence":
+                    log.error("serveur injoignable depuis %.0f s — sur Vast on ne se tue pas (le "
+                              "conteneur serait relancé) : on attend le balai du serveur", mut)
+                self.arret = "silence"
+                return
             log.error("serveur injoignable depuis %.0f s — le worker se tue pour ne plus "
                       "facturer ses cartes dans le vide", mut)
             _quitter(3)

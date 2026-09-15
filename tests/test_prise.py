@@ -251,6 +251,21 @@ def test_un_serveur_injoignable_fait_reessayer_puis_sortir(monkeypatch):
     assert demandes["n"] >= 3, "il devait reessayer avant de sortir"
 
 
+def test_sur_vast_l_homme_mort_ne_tue_pas(monkeypatch):
+    """Sur Vast, un conteneur qui sort est relance en boucle et le pod reste facture :
+    passe le second seuil, le worker se tait au lieu de se tuer, et attend le balai."""
+    monkeypatch.setenv("SPARK_PROVIDER", "vastai")
+    monkeypatch.setattr(service, "SILENCE_DOUX_S", 0.1)
+    monkeypatch.setattr(service, "SILENCE_NET_S", 0.2)
+    monkeypatch.setattr(service, "ATTENTE_ERREUR_S", 0.05)
+    quitte: list[int] = []
+    monkeypatch.setattr(service, "_quitter", lambda code: quitte.append(code))
+    bat = service.Battement("https://serveur/prise?sig=x", {}, lambda: {})
+    bat._contact = time.monotonic() - 1.0    # muet depuis une seconde
+    bat.silence()
+    assert quitte == [] and bat.arret == "silence"
+
+
 def test_un_serveur_muet_pendant_un_job_finit_par_tuer_le_worker(monkeypatch):
     """Un job en cours et plus de serveur : passe le second seuil, l'homme-mort tue le
     processus meme en plein job — l'alternative est de payer les cartes jusqu'a la

@@ -65,7 +65,10 @@ couper un worker coûte au pire un job.
   relais planifié, pas une coupe, et le worker se protège seul même sans serveur.
 - À chaque demande il se présente : hébergeur, identifiant d'instance, image, démarré
   à, cartes, et l'avancement de chacun de ses jobs. C'est avec ça que le bot décide.
-- Homme-mort : 5 min sans serveur, il cesse de prendre ; 15 min, il se tue.
+- Homme-mort, par sa propre horloge : 5 min sans serveur, il cesse de prendre ; 15 min, il
+  se tue sur Modal et RunPod (le conteneur finit, la facturation aussi). Sur Vast il ne se
+  tue pas — un conteneur qui sort y est relancé en boucle, facturé — il se tait, et c'est le
+  balai du serveur qui détruit le pod par l'API dès que le serveur est de retour.
 
 ---
 
