@@ -163,6 +163,31 @@ bloquée au chargement, Docker de l'hôte cassé (« unknown flag: --runtime »)
 compte désormais ces machines comme des échecs, liste noire au troisième (`35c47152`).
 Coût total de la série : 0,34 $.
 
+### RTX 4090 (24 Go) — mesuré le 2026-09-15
+
+Question du propriétaire : quelle vitesse sur une 4090, la carte des machines RunPod
+(4 × RTX 4090, 4,40 $/h la machine) ? Mesurée sur Vast, une carte seule (0,469 $/h, Suède,
+48 cœurs, 7 Gb/s), même protocole que les 48 Go. L'image publiée refusant encore les cartes
+Ada, sa commande a été remplacée par une qui applique le correctif `d88ea82` au démarrage.
+
+| Jobs simultanés | Mur | Débit | Gain | Inférence par job | Mémoire |
+|---|---|---|---|---|---|
+| 1 | 15,9 s | 3,77/min | ×1 | 13,4 s | 5,0 Go |
+| 2 | 28,5 s | 4,21/min | ×1,12 | 22,4 s | 9,4 Go |
+| 3 | 41,2 s | 4,37/min | ×1,16 | 34,0 s | 14,1 Go |
+| 4 | 53,5 s | 4,49/min | ×1,19 | 46,6 s | 18,2 Go |
+| 5 | 67,8 s | 4,42/min | ×1,17 | 58,2 s | 22,6 Go |
+
+- **Aussi rapide que la Blackwell de 48 Go** pour un job seul (15,9 s contre 15,7 s), deux fois
+  plus que la RTX 8000.
+- **La courbe de gain est la même** (×1,12 à 2, ×1,19 à 4) : celle de l'ordonnanceur
+  (`GAIN_MESURE`) tient aussi sur 24 Go. À 5 jobs le débit baisse déjà : **3 places** (la
+  table du propriétaire) laissent moins de 3 % sur la table et gardent l'attente par job à 41 s.
+- **Coût par job** à 3 places : **0,0018 $ sur Vast** (0,469 $/h), la moins chère mesurée.
+  Chez RunPod, 1,10 $/h la carte : **0,0042 $**, 2,3 fois plus, démarrage non compris.
+
+Coût du test : 0,03 $.
+
 ### Gain de débit
 
 | Situation | Gain |
