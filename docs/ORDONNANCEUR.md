@@ -133,6 +133,37 @@ plus pour le moins cher (une 3090 bon marché a coûté plus cher à l'usage qu'
 Blackwell ; deux cartes rendent ×2,3) — préfère une machine qui a déjà l'image, et ne
 prend une grosse machine que s'il a de quoi la remplir.
 
+### Choisir une machine Vast
+
+**Compatibilité, pas une liste de cartes.** Le filtre garde toute machine que l'image
+peut exécuter, quel que soit le nom de la carte :
+
+| Critère | Seuil | Pourquoi |
+|---|---|---|
+| capacité de calcul | ≥ 7,5 | les roues torch 2.7.1 + CUDA 12.8 (un V100 est refusé, même sur pilote récent) |
+| pilote `cuda_max_good` | ≥ 12.8 | l'image embarque CUDA 12.8 |
+| VRAM par carte | ≥ 24 Go | une séparation prend ~4 Go, on en veut plusieurs par carte |
+| cœurs CPU | ≥ 8 | le décodage et l'encodage tournent sur CPU ; en dessous la carte dort |
+| débit réseau | ≥ 2 Gb/s | 13 Mo par job en entrée |
+| disque | ≥ 20 Go | l'image fait 5,3 Go compressés |
+| `verified`, fiabilité | oui, ≥ 0,97 | |
+
+Le filtre `gpu_name` de l'API Vast est ignoré par Vast : on trie côté client. Les
+machines qui ont refusé l'image ou rendu un résultat invalide vont en liste noire.
+
+**Le coût complet d'une machine pour un lot**, pas seulement son prix horaire :
+
+`coût = durée prévue × (prix horaire total + disque alloué × prix stockage) + octets entrants × prix entrée + octets sortants × prix sortie`
+
+- la durée prévue vient du **débit** de la machine : mesuré si on la connaît (mémoire des
+  machines), sinon celui de sa classe de carte, corrigé par le CPU et le réseau ;
+- les octets viennent des jobs du lot (13 Mo par séparation, 6 par voix, plus pour les
+  visages) ;
+- le tirage de l'image n'est pas facturé en temps ; sa bande passante, à vérifier.
+
+On classe par **coût par job** et on retient la première machine qu'on peut remplir.
+C'est ce qui fait qu'une offre à 0,12 $/h peut perdre contre une à 0,60.
+
 ---
 
 ## Ce que le bot sait à chaque instant
