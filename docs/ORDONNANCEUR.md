@@ -72,29 +72,28 @@ couper un worker coûte au pire un job.
 
 ---
 
-## Le rythme : des lots de 10 minutes
+## Le rythme : 10 minutes au réveil, puis au fil de l'eau
 
-Les demandes des utilisateurs ne partent pas une à une. Quand un utilisateur demande,
-ses jobs sont créés et posés dans la file. **Toutes les 10 minutes**, le bot prend tout
-ce qui s'est accumulé et lance le traitement du lot.
+Le 10 minutes n'est pas un rythme, c'est un **démarrage à froid**.
 
-Ce que ça donne :
+1. La file est vide depuis un moment : tout dort, aucun worker payant.
+2. Un premier job arrive. On laisse la file se remplir **10 minutes** avant de démarrer,
+   pour ne pas payer un démarrage de machine pour un seul job.
+3. On démarre. À partir de là, **tout ce qui arrive est traité au fil de l'eau** : les
+   workers piochent en continu, le bot ajuste la capacité en continu.
+4. Quand la file reste vide un certain temps, on repasse en sommeil. Le 10 minutes se
+   réarme au prochain job.
 
-- le bot **planifie un lot entier** : il connaît le nombre de jobs, les tâches, les
-  durées de média, et achète d'un coup la capacité pour finir le lot **avant le lot
-  suivant** — c'est la cible d'attente ;
-- en cours de lot il ne fait que corriger : rajouter si ça traîne, couper si ça va
-  plus vite que prévu ;
-- entre deux lots il décide qui reste chaud : Modal oui (crédit gratuit), RunPod et
-  Vast seulement si 10 min d'attente, facturées à la seconde, coûtent moins qu'un
-  redémarrage ;
-- un job posé pendant un lot attend le tick suivant ;
-- **sauf la voie express, sur Modal seulement** : un projet dont le média total fait
-  moins de 5 minutes (seuil Doppler) n'attend pas le tick. Ses jobs sont prenables tout de
-  suite et servis AVANT ceux du lot ; un worker Modal chaud les pioche dans la seconde,
-  sinon le bot en démarre un aussitôt. Le critère est la durée du projet, pas celle des
-  jobs découpés. **Crédit Modal épuisé : plus d'express**, ces projets rejoignent le lot
-  des 10 minutes comme les autres — on ne paie jamais RunPod ni Vast pour aller vite.
+En croisière, la règle du bot est de **garder la file courte au meilleur coût** : il
+ajoute une machine quand le temps de vidage prévu dépasse un seuil, il coupe quand il
+repasse dessous. Le seuil est la question 1.
+
+**Voie express, sur Modal seulement** : un projet dont le média total fait moins de
+5 minutes (seuil Doppler) n'attend pas les 10 minutes du réveil. Ses jobs sont prenables
+tout de suite et servis AVANT les autres ; un worker Modal chaud les pioche dans la
+seconde, sinon le bot en démarre un aussitôt. Le critère est la durée du projet, pas
+celle des jobs découpés. **Crédit Modal épuisé : plus d'express**, ces projets attendent
+comme les autres — on ne paie jamais RunPod ni Vast pour aller vite.
 
 ---
 
@@ -282,10 +281,10 @@ le bot se teste de bout en bout sans allumer une seule carte.
 
 ## Ce que je te demande de trancher
 
-1. **Cible d'attente** : un lot doit-il toujours finir dans ses 10 minutes, ou le coût peut-il primer et laisser déborder ?
-2. **Période de grâce** d'un worker inactif entre deux lots : fixée par fournisseur, ou calculée par le bot d'après les lots précédents ?
-7. **Le lot vaut pour toutes les tâches** (y compris le changement de voix lancé depuis le studio), ou certaines partent tout de suite ?
-8. **Les 10 minutes sont fixes** (cron), ou le bot peut déclencher plus tôt quand le lot est déjà gros ?
+1. **Cible d'attente en croisière** : combien de minutes de file tolère-t-on avant de payer une machine de plus ?
+2. **Période de grâce** d'un worker inactif, et temps de file vide avant de repasser en sommeil : la même durée, fixée par fournisseur, ou calculée par le bot d'après le rythme des arrivées ?
+7. **Le réveil à 10 minutes vaut pour toutes les tâches** (y compris le changement de voix lancé depuis le studio), ou certaines démarrent tout de suite ?
+8. **Les 10 minutes du réveil sont fixes**, ou le bot peut démarrer plus tôt quand la file est déjà grosse ?
 3. **Durée max d'un job** : 2 minutes de GPU te va ?
 4. **Crédit Modal** : on le dépense dès qu'il y a du travail, sans le garder en réserve ?
 5. **Plafond Vast par jour**, en dollars.
