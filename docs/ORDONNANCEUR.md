@@ -88,12 +88,15 @@ En croisière, la règle du bot est de **garder la file courte au meilleur coût
 ajoute une machine quand le temps de vidage prévu dépasse un seuil, il coupe quand il
 repasse dessous. Le seuil est la question 1.
 
-**Voie express, sur Modal seulement** : un projet dont le média total fait moins de
-5 minutes (seuil Doppler) n'attend pas les 10 minutes du réveil. Ses jobs sont prenables
-tout de suite et servis AVANT les autres ; un worker Modal chaud les pioche dans la
-seconde, sinon le bot en démarre un aussitôt. Le critère est la durée du projet, pas
-celle des jobs découpés. **Crédit Modal épuisé : plus d'express**, ces projets attendent
-comme les autres — on ne paie jamais RunPod ni Vast pour aller vite.
+**Voie express** : un projet dont le média total fait moins de 5 minutes (seuil Doppler)
+n'attend pas les 10 minutes du réveil. Ses jobs sont prenables tout de suite et servis
+AVANT les autres. Le critère est la durée du projet, pas celle des jobs découpés.
+
+- un worker allumé a une place libre, **quel que soit l'hébergeur** → il prend l'express
+  dans la seconde, ce qui est allumé ne coûte rien de plus ;
+- aucun worker allumé → le bot en démarre un **chez Modal seulement**, s'il a du crédit ;
+- ni worker allumé ni crédit Modal → l'express attend le réveil comme les autres. On ne
+  démarre jamais une machine RunPod ou Vast pour aller vite.
 
 ---
 
