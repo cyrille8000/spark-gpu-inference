@@ -6,6 +6,7 @@ exécution, erreurs typées, rappels `started` / `heartbeat` / `finished` vers
 """
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import os
 import threading
@@ -33,20 +34,21 @@ MAX_SOUS_JOBS = 256
 # Jobs pris PAR CARTE. Décidé par le propriétaire le 2026-09-12 : deux. La mémoire
 # en permettrait davantage (5 séparations tiennent sur une carte de 24 Go), mais
 # deux garde une marge confortable et rend la capacité lisible — quatre cartes
-# donnent huit, trois donnent six.
+# donnent huit, trois donnent six. Le serveur peut en passer un autre (`jobs_par_carte`).
 JOBS_PAR_CARTE = 2
-# GARDE-FOU, pas règle d'arrêt. Ce qui arrête le worker, c'est la FILE VIDE : tant
-# qu'il y a du travail il continue, sinon il sort tout de suite (décision du
-# propriétaire, 2026-09-12, les coupures des hébergeurs étant portées à 5 heures).
-#
-# Le budget ne sert plus qu'au cas où rien ne s'arrête : un blocage dans le code, une
-# vague qui ne finit jamais. Sans lui, la facture serait de cinq heures fois le nombre
-# de cartes. 4 h 50 laisse dix minutes sous le plafond.
-#
-# La règle « assez de temps pour une vague de plus ? » reste vraie dans les deux cas :
-# un worker coupé en pleine vague perd TOUT son travail, donc il rend la main avant.
-BUDGET_DEFAUT_S = 17400.0
-# En dessous de ça, inutile de redemander : on n'aurait pas le temps de finir.
+# LE WORKER NE SORT PLUS SUR FILE VIDE (décision du propriétaire, 2026-09-15). Avant,
+# une prise vide le faisait sortir pour ne pas payer l'attente. Désormais c'est
+# l'ORDONNANCEUR qui monte et qui descend : les hébergeurs sont réglés avec des
+# coupures énormes, le worker attend `attente_s` (donné par le serveur) puis
+# redemande, et ne sort que sur l'ordre `arret` porté par une réponse. Un worker
+# inactif ne coûte ainsi que quelques requêtes par minute — et c'est le serveur qui
+# sait s'il vaut mieux le garder chaud ou le couper.
+ATTENTE_DEFAUT_S = 15.0
+ATTENTE_MAX_S = 300.0
+ATTENTE_ERREUR_S = 10.0
+# `budget_s` est FACULTATIF : sans lui, pas de limite de vie côté worker. Donné, il
+# reste ce qu'il était — le worker cesse de reprendre quand il ne lui reste plus le
+# temps d'un job, laisse finir, et sort (un job coupé en cours perd tout).
 PLANCHER_S = 45.0
 
 # ── BATTEMENT DU WORKER ───────────────────────────────────────────────────────
@@ -61,6 +63,7 @@ PLANCHER_S = 45.0
 # Vast : `{"arret": "doux"}` — cesse de reprendre, laisse finir, sors ;
 # `{"arret": "net"}` — sors tout de suite, on abandonne ce qui tourne.
 BATTEMENT_S = 30.0
+BATTEMENT_MIN_S = 5.0
 # Un worker qui n'atteint plus le serveur ne peut être arrêté que DE L'INTÉRIEUR :
 # aucun ordre ne lui parviendra, par définition. Il cesse donc de reprendre après
 # ce silence-là...
@@ -227,7 +230,7 @@ class Battement:
         self.url = url
         self.identite = identite
         self.etat = etat
-        self.periode = max(5.0, float(periode_s))
+        self.periode = max(BATTEMENT_MIN_S, float(periode_s))
         self.arret: str | None = None      # None | "doux" | "net" | "silence"
         self.battus = 0
         self._contact = time.monotonic()
@@ -269,26 +272,96 @@ class Battement:
 
     def lire_ordre(self, rep: dict) -> None:
         """Obéit à `arret` dans N'IMPORTE QUELLE réponse du serveur — prise comme
-        battement. « net » coupe tout de suite et perd ce qui tourne ; « doux » laisse
-        finir. Le serveur choisit selon l'urgence."""
+        battement. « doux » : cesser de reprendre, laisser finir, sortir. « net » :
+        abandonner ce qui tourne — mais c'est la boucle de prise qui l'exécute, APRÈS
+        avoir rendu au serveur les résultats déjà finis et la liste des jobs
+        abandonnés (sinon un job fini entre deux prises serait perdu, et le serveur
+        ne saurait pas quoi remettre en file)."""
         ordre = str(rep.get("arret") or "").strip().lower()
         if ordre == "net":
-            log.warning("arrêt NET demandé par le serveur — on abandonne ce qui tourne")
-            os._exit(0)
+            if self.arret != "net":
+                log.warning("arrêt NET demandé par le serveur — on rend ce qui est fini et on sort")
+            self.arret = "net"
+            return
         if ordre or rep.get("stop"):
             if self.arret is None:
                 log.info("arrêt demandé par le serveur : on cesse de reprendre")
             self.arret = "doux"
 
-    def _silence(self) -> None:
+    def silence(self) -> None:
+        """Le serveur ne répond pas (battement OU prise ratés) : l'homme-mort avance.
+        Aucun ordre ne peut nous parvenir, donc on décide seul — d'abord on cesse de
+        reprendre, puis on se tue, sinon on facturerait les cartes dans le vide."""
         mut = time.monotonic() - self._contact
         if mut > SILENCE_NET_S:
             log.error("serveur injoignable depuis %.0f s — le worker se tue pour ne plus "
                       "facturer ses cartes dans le vide", mut)
-            os._exit(3)
+            _quitter(3)
         if mut > SILENCE_DOUX_S and self.arret is None:
             log.warning("serveur injoignable depuis %.0f s — on cesse de reprendre", mut)
             self.arret = "silence"
+
+    _silence = silence  # ancien nom
+
+
+def _quitter(code: int) -> None:
+    """Sortie brutale du processus — remplaçable dans les tests."""
+    os._exit(code)
+
+
+def _attente(rep: dict) -> float:
+    """Combien attendre avant de redemander, quand la file est vide : ce que le serveur
+    dit (`attente_s`), borné, sinon le défaut."""
+    try:
+        v = float(rep.get("attente_s") or ATTENTE_DEFAUT_S)
+    except (TypeError, ValueError):
+        v = ATTENTE_DEFAUT_S
+    return max(1.0, min(ATTENTE_MAX_S, v))
+
+
+def _dormir(secondes: float, reveil: Callable[[], bool]) -> None:
+    """Attend `secondes`, par petits pas, en s'arrêtant dès que `reveil()` dit vrai
+    (un ordre d'arrêt ne doit pas attendre la fin d'une sieste)."""
+    fin = time.monotonic() + max(0.0, secondes)
+    while time.monotonic() < fin and not reveil():
+        time.sleep(min(0.5, max(0.0, fin - time.monotonic())))
+
+
+def _budget(inp: dict) -> float | None:
+    """`budget_s` facultatif : None = pas de limite de vie côté worker."""
+    try:
+        v = float(inp.get("budget_s") or 0)
+    except (TypeError, ValueError):
+        return None
+    return max(PLANCHER_S, v) if v > 0 else None
+
+
+def _instance_vast(label: str | None) -> str | None:
+    """Vast.ai pose `VAST_CONTAINERLABEL=C.<id d'instance>` dans le conteneur."""
+    if not label:
+        return None
+    return label.split(".", 1)[1] if label.startswith("C.") else label
+
+
+def identite_hebergeur() -> dict:
+    """De quoi le serveur peut retrouver CE worker par l'API de son hébergeur, et ce
+    qu'il tourne : posé dans l'environnement par l'hébergeur (RunPod `RUNPOD_POD_ID`,
+    Modal `MODAL_TASK_ID`, Vast `VAST_CONTAINERLABEL`) ou par celui qui l'a démarré
+    (`SPARK_INSTANCE_ID`, `SPARK_MACHINE_ID` — l'ordonnanceur les connaît au moment
+    de louer). `SPARK_IMAGE_TAG` est posé au build. Tout est facultatif : un champ
+    absent vaut None, jamais une erreur."""
+    env = os.environ
+    demarre = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=CLOCK.uptime())
+    return {
+        "provider": env.get("SPARK_PROVIDER", ""),
+        "instance_id": (env.get("SPARK_INSTANCE_ID") or env.get("RUNPOD_POD_ID") or env.get("MODAL_TASK_ID")
+                        or _instance_vast(env.get("VAST_CONTAINERLABEL")) or env.get("CONTAINER_ID") or None),
+        "machine_id": env.get("SPARK_MACHINE_ID") or None,
+        "endpoint": env.get("RUNPOD_ENDPOINT_ID") or env.get("SPARK_ENDPOINT_ID") or None,
+        "image_tag": env.get("SPARK_IMAGE_TAG") or None,
+        "demarre_a": demarre.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        "pid": os.getpid(),
+    }
 
 
 def process_pull(inp: dict, job_id: str, progress: Progress | None = None) -> dict:
@@ -325,105 +398,172 @@ def process_pull(inp: dict, job_id: str, progress: Progress | None = None) -> di
     cartes = registry.devices()
     par_carte = max(1, int(inp.get("jobs_par_carte") or JOBS_PAR_CARTE))
     places = par_carte * len(cartes)
-    budget = max(PLANCHER_S, float(inp.get("budget_s") or BUDGET_DEFAUT_S))
+    budget = _budget(inp)
     debut = time.monotonic()
+    # L'identité voyage avec CHAQUE demande : c'est ce qui permet au serveur de
+    # retrouver ce worker chez son hébergeur (instance), de savoir ce qu'il tourne
+    # (image) et depuis quand (démarrage) — de quoi décider de le garder ou de le couper.
     identite = {
-        "worker": job_id, "provider": os.environ.get("SPARK_PROVIDER", ""),
-        "gpu_name": registry.gpu_name(), "cartes": cartes, "places": places,
+        **identite_hebergeur(),
+        "worker": job_id, "gpu_name": registry.gpu_name(), "cartes": cartes, "places": places,
+        "vram_gb": registry.vram_total_gb(),
     }
     dire = progress or (lambda _p: None)
-    log.info("[%s] PRISE : %d carte(s) x %d = %d place(s) tenues pleines, budget %.0f s",
-             job_id, len(cartes), par_carte, places, budget)
+    log.info("[%s] PRISE : %d carte(s) x %d = %d place(s) tenues pleines, budget %s, instance %s",
+             job_id, len(cartes), par_carte, places,
+             "aucun" if budget is None else f"{budget:.0f} s", identite.get("instance_id"))
 
-    en_vol: dict = {}          # Future -> instant de départ
+    en_vol: dict = {}          # Future -> suivi {job_id, task, debut, percent, message}
     a_rendre: list[dict] = []  # résultats à joindre à la prochaine demande
     durees: list[float] = []
-    faits = reussis = lances = 0
+    faits = reussis = lances = attentes = 0
     on_reprend = True
-    raison = "file vide"
+    raison = "arrêt demandé par le serveur"
+    prochaine = 0.0            # instant avant lequel on ne redemande pas (file vide)
+    verrou = threading.Lock()
 
     def etat() -> dict:
+        """Ce que le serveur reçoit à chaque contact : l'avancement de CHAQUE job en
+        cours (pour décider d'une coupe d'après le progrès), pas seulement un compte."""
         ecoule = max(0.001, time.monotonic() - debut)
-        return {"prise": job_id, "places": places, "en_vol": len(en_vol), "faits": faits,
-                "reussis": reussis, "ecoule_s": round(ecoule, 1),
-                "debit_par_min": round(faits / (ecoule / 60), 2),
-                "message": f"prise : {faits} fini(s), {len(en_vol)} en cours sur {places}"}
+        maintenant = time.monotonic()
+        with verrou:
+            en_cours = [{"job_id": s["job_id"], "task": s["task"],
+                         "elapsed_s": round(maintenant - s["debut"], 1),
+                         "percent": s["percent"], "message": s["message"]} for s in en_vol.values()]
+        return {"prise": job_id, "places": places, "en_vol": en_cours, "faits": faits,
+                "reussis": reussis, "ecoule_s": round(ecoule, 1), "uptime_s": round(CLOCK.uptime(), 1),
+                "debit_par_min": round(faits / (ecoule / 60), 2), "attentes": attentes,
+                "message": f"prise : {faits} fini(s), {len(en_cours)} en cours sur {places}"}
+
+    def lancer(ex: ThreadPoolExecutor, j: dict) -> None:
+        nonlocal lances
+        lances += 1
+        # L'identifiant du SERVEUR quand il en donne un : c'est le sien qu'il retrouve
+        # dans `en_vol`, `resultats` et `abandonnes`. Sinon le nôtre.
+        jid = str(j.get("id") or j.get("job_id") or f"{job_id}-{lances:03d}")
+        suivi = {"job_id": jid, "task": j.get("task"), "debut": time.monotonic(),
+                 "percent": None, "message": None}
+
+        def prog(p: dict) -> None:
+            suivi["percent"], suivi["message"] = p.get("percent"), p.get("message")
+            if progress is not None:
+                progress(p)
+
+        f = ex.submit(process_job, j, jid, prog)
+        with verrou:
+            en_vol[f] = suivi
 
     bat = Battement(url, identite, etat, float(inp.get("battement_s") or BATTEMENT_S))
     bat.start()
     with places_du_lot(places), ThreadPoolExecutor(max_workers=places) as ex:
         while True:
+            # ARRÊT NET : on rend d'abord ce qui est fini et la liste de ce qu'on
+            # abandonne (le serveur les remet en file), puis on sort sans attendre.
+            if bat.arret == "net":
+                with verrou:
+                    abandonnes = [s["job_id"] for s in en_vol.values()]
+                _demander(url, {**identite, **etat(), "libres": 0, "restant_s": 0, "fin": True,
+                                "resultats": a_rendre, "abandonnes": abandonnes}, essais=1)
+                a_rendre = []
+                log.warning("[%s] sortie NETTE : %d résultat(s) rendus, %d job(s) abandonné(s)",
+                            job_id, faits, len(abandonnes))
+                bat.stop()
+                _quitter(0)
+                raison = "arrêt NET demandé par le serveur"
+                break   # atteint seulement si `_quitter` est remplacé (tests)
             if bat.arret and on_reprend:
                 on_reprend = False
                 raison = ("arrêt demandé par le serveur" if bat.arret == "doux"
                           else "serveur muet trop longtemps")
             libres = places - len(en_vol)
-            restant = budget - (time.monotonic() - debut)
-            # Assez de temps pour un job de plus ? On se fie au plus long déjà vu,
-            # majoré : un job coupé en cours perd tout ce qu'il a calculé.
-            marge = max(PLANCHER_S, (max(durees) if durees else 0.0) * 1.25)
+            attente = None
 
-            if on_reprend and libres > 0:
-                if restant < marge:
+            if on_reprend and libres > 0 and time.monotonic() >= prochaine:
+                restant = None if budget is None else budget - (time.monotonic() - debut)
+                # Assez de temps pour un job de plus ? On se fie au plus long déjà vu,
+                # majoré : un job coupé en cours perd tout ce qu'il a calculé.
+                marge = max(PLANCHER_S, (max(durees) if durees else 0.0) * 1.25)
+                if restant is not None and restant < marge:
                     on_reprend = False
                     raison = f"budget épuisé ({restant:.0f} s restantes)"
                 else:
-                    rep = _demander(url, {**identite, "libres": libres,
-                                          "restant_s": round(restant, 1),
+                    rep = _demander(url, {**identite, **etat(), "libres": libres,
+                                          "restant_s": None if restant is None else round(restant, 1),
                                           "resultats": a_rendre})
                     a_rendre = []
                     if rep.get("erreur"):
-                        on_reprend = False
-                        raison = f"serveur injoignable : {rep['erreur']}"
+                        # Pas de sortie : le serveur peut revenir. L'homme-mort décide
+                        # seul si le silence dure (5 min : on cesse ; 15 min : on se tue).
+                        bat.silence()
+                        attente = ATTENTE_ERREUR_S
                     else:
                         bat.contact()
                         # L'ordre d'arrêt voyage sur CE canal aussi : c'est celui qui
-                        # existe déjà et qui est le plus fréquent. Pas besoin d'attendre
-                        # un battement pour obéir.
+                        # existe déjà et qui est le plus fréquent.
                         bat.lire_ordre(rep)
+                        if bat.arret == "net":
+                            continue   # tout de suite : rendre et sortir, sans attendre un job
                         jobs = [j for j in (rep.get("jobs") or []) if isinstance(j, dict)]
-                        if not jobs:
-                            on_reprend = False
-                            raison = "file vide"
                         for j in jobs[:libres]:
-                            lances += 1
-                            f = ex.submit(process_job, j, f"{job_id}-{lances:03d}", progress)
-                            en_vol[f] = time.monotonic()
+                            lancer(ex, j)
                         if jobs:
                             dire(etat())
+                        else:
+                            # FILE VIDE : on attend ce que le serveur dit, on ne sort pas.
+                            attente = _attente(rep)
+                    prochaine = time.monotonic() + (attente or 0.0)
 
             if not en_vol:
-                break
+                if bat.arret == "net":
+                    continue
+                if bat.arret and on_reprend:
+                    on_reprend = False
+                    raison = ("arrêt demandé par le serveur" if bat.arret == "doux"
+                              else "serveur muet trop longtemps")
+                if not on_reprend:
+                    break
+                attentes += 1
+                _dormir(max(0.0, prochaine - time.monotonic()), lambda: bat.arret is not None)
+                continue
 
-            # On attend qu'AU MOINS une place se libère, pas que tout soit fini.
-            termines, _ = wait(list(en_vol), return_when=FIRST_COMPLETED)
+            # On attend qu'AU MOINS une place se libère, pas que tout soit fini — et
+            # jamais plus de deux secondes d'affilée, pour voir un ordre d'arrêt.
+            termines, _ = wait(list(en_vol), timeout=2.0, return_when=FIRST_COMPLETED)
             for f in termines:
-                parti = en_vol.pop(f)
-                durees.append(time.monotonic() - parti)
+                with verrou:
+                    suivi = en_vol.pop(f)
+                durees.append(time.monotonic() - suivi["debut"])
                 try:
                     r = f.result()
                 except Exception as e:  # noqa: BLE001 — `process_job` ne lève jamais, ceinture
-                    r = {"status": "error", "code": "internal", "error": f"{type(e).__name__}: {e}"}
+                    r = {"status": "error", "code": "internal", "error": f"{type(e).__name__}: {e}",
+                         "job_id": suivi["job_id"], "task": suivi["task"]}
                 faits += 1
                 reussis += 1 if r.get("status") == "completed" else 0
                 a_rendre.append(_resume(r))
-            dire(etat())
+            if termines:
+                # Une place vient de se libérer : on redemande tout de suite, et les
+                # résultats voyagent avec la demande.
+                prochaine = 0.0
+                dire(etat())
 
     bat.stop()
 
     # Ce qui n'a pas pu voyager avec une demande suivante : sans ce dernier envoi, le
     # serveur garderait ces réservations jusqu'à leur expiration.
-    if a_rendre:
-        _demander(url, {**identite, "libres": 0, "restant_s": 0, "fin": True,
-                        "resultats": a_rendre})
+    if a_rendre or raison != "arrêt NET demandé par le serveur":
+        _demander(url, {**identite, **etat(), "libres": 0, "restant_s": 0, "fin": True,
+                        "resultats": a_rendre, "raison": raison}, essais=1)
 
-    log.info("[%s] PRISE terminée : %d/%d sous-job(s) en %.0f s — %s",
-             job_id, reussis, faits, time.monotonic() - debut, raison)
+    log.info("[%s] PRISE terminée : %d/%d sous-job(s) en %.0f s, %d attente(s) — %s",
+             job_id, reussis, faits, time.monotonic() - debut, attentes, raison)
     return {
         "status": "completed", "prise": True, "job_id": job_id,
         "total": faits, "reussis": reussis, "echecs": faits - reussis,
         "places": places, "cartes": cartes, "gpu_name": registry.gpu_name(),
-        "arret": raison, "battements": bat.battus,
+        "instance_id": identite.get("instance_id"), "image_tag": identite.get("image_tag"),
+        "arret": raison, "battements": bat.battus, "attentes": attentes,
         "elapsed_s": round(time.monotonic() - debut, 3),
         "provider": os.environ.get("SPARK_PROVIDER", ""),
     }

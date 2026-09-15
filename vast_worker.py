@@ -447,13 +447,39 @@ def surveiller_inactivite(serveur: ThreadingHTTPServer) -> None:
 TOKEN = os.environ.get("SPARK_WORKER_TOKEN", "")
 
 
+def prise(carte: dict, url: str) -> None:
+    """MODE PRISE sur Vast.ai : le pod VA CHERCHER son travail à `url`, comme un worker
+    Modal ou RunPod lancé avec `{"claim_url": …}`. Aucun port à ouvrir, aucun jeton de
+    worker : l'URL signée porte l'autorisation et le pod n'accepte rien en entrée.
+    C'est ce que l'ordonnanceur pose à la location (`-e SPARK_CLAIM_URL=…`), avec
+    `SPARK_INSTANCE_ID` / `SPARK_MACHINE_ID` pour que le worker se présente sous
+    l'identité que l'API Vast connaît. Le pod ne sort que sur l'ordre du serveur ;
+    l'ordonnanceur le détruit ensuite par l'API (un pod arrêté facture encore son disque)."""
+    entree: dict = {"claim_url": url}
+    for cle, env in (("jobs_par_carte", "SPARK_JOBS_PAR_CARTE"), ("budget_s", "SPARK_BUDGET_S"),
+                     ("battement_s", "SPARK_BATTEMENT_S")):
+        v = os.environ.get(env, "").strip()
+        if v:
+            entree[cle] = float(v)
+    ident = f"vast-{uuid.uuid4().hex[:12]}"
+    log.info("mode PRISE : %d x %s, %s Go par carte — %s", carte["nb_cartes"], carte["gpu_name"],
+             carte["vram_total_gb"], url.split("?", 1)[0])
+    out = process_job(entree, ident)
+    log.info("prise terminée : %s", json.dumps({k: out.get(k) for k in
+                                                 ("total", "reussis", "echecs", "places", "arret", "attentes", "elapsed_s")}))
+    raise SystemExit(0 if out.get("status") == "completed" else 1)
+
+
 def main() -> None:
     logging.basicConfig(level=os.environ.get("SPARK_LOG_LEVEL", "INFO"),
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    if not TOKEN:
+    claim_url = os.environ.get("SPARK_CLAIM_URL", "").strip()
+    if not TOKEN and not claim_url:
         log.error("SPARK_WORKER_TOKEN absent : un pod public sans jeton offrirait sa carte à tout Internet")
         raise SystemExit(2)
     carte = verifier_carte()
+    if claim_url:
+        prise(carte, claim_url)
     port = int(os.environ.get("SPARK_WORKER_PORT", "8000"))
     # 5 par défaut dans la bibliothèque standard : au-delà, le système jette les
     # connexions en attente d'acceptation. Un lot de 20 jobs en ouvre 20 d'un coup.

@@ -185,14 +185,20 @@ Il demande, exécute, et renvoie ses résultats AVEC la demande suivante :
 
 Le serveur rend au plus `capacite` jobs. Deux règles tiennent tout le reste :
 
-**Prise vide, le worker sort.** Il ne sonde jamais en attendant du travail — un worker
-qui attend est facturé à la milliseconde, cartes comprises. Un redémarrage sur une
-machine qui a déjà l'image coûte une vingtaine de secondes ; attendre coûte plus cher.
+**File vide, le worker ATTEND** (décision du 2026-09-15, qui inverse celle du 12). Il dort
+`attente_s` — ce que le serveur lui dit, 15 s par défaut — puis redemande. Il ne sort que
+sur l'ordre `arret` du serveur : c'est l'ordonnanceur qui monte et qui descend, les
+hébergeurs sont réglés avec des coupures énormes. `doux` laisse finir ; `net` rend d'abord
+les résultats finis et la liste `abandonnes` des jobs en cours, puis sort sans attendre.
 
-**Il s'arrête avant son budget.** `budget_s` (défaut 420 s) reste très en dessous des
-coupures des hébergeurs — 600 s chez RunPod, 900 s chez Modal. Un worker coupé en
-pleine vague perd tout son travail, donc il rend la main de lui-même : il ne redemande
-que s'il a le temps d'une vague de plus, estimé sur la précédente.
+**Pas de budget par défaut.** `budget_s` reste possible : donné, le worker cesse de
+reprendre quand il ne lui reste plus le temps d'un job, laisse finir, et sort.
+
+**Chaque demande porte l'identité du worker** — `instance_id` (RunPod `RUNPOD_POD_ID`, Modal
+`MODAL_TASK_ID`, Vast `VAST_CONTAINERLABEL`, ou `SPARK_INSTANCE_ID` posé par celui qui a lancé),
+`machine_id`, `image_tag` (posé au build, `sha-…`), `demarre_a`, `uptime_s` — et l'avancement de
+chaque job en cours (`en_vol[]` : id du serveur, tâche, `elapsed_s`, `percent`). Sur Vast,
+`SPARK_CLAIM_URL` lance le pod directement en prise : aucun port à ouvrir, aucun jeton.
 
 Le dernier envoi porte `"fin": true` : il ne sert que si la boucle s'arrête d'elle-même
 (budget, serveur muet), car il n'y a alors plus de demande suivante où glisser les

@@ -1,4 +1,13 @@
-# Le worker va chercher son travail — architecture et état au 2026-09-12
+# Le worker va chercher son travail — architecture et état au 2026-09-15
+
+> **Mise à jour du 2026-09-15.** Le propriétaire a inversé la règle « file vide, on sort » :
+> le worker ATTEND désormais (`attente_s` donné par le serveur) et ne sort que sur `arret`.
+> C'est l'ordonnanceur — à écrire, voir [ORDONNANCEUR.md](ORDONNANCEUR.md) — qui monte et
+> qui descend ; les coupures des hébergeurs seront réglées très hautes. Chaque demande porte
+> l'identité du worker (`instance_id`, `machine_id`, `image_tag`, `demarre_a`, `uptime_s`) et
+> l'avancement de chaque job en cours (`en_vol[]`). `net` rend d'abord ce qui est fini et
+> liste `abandonnes`. Les paragraphes « Deux sorties, jamais une attente » et « Budget
+> épuisé » ci-dessous décrivent l'ancien comportement.
 
 ## Où on en est
 

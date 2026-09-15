@@ -14,7 +14,11 @@ FROM python:3.11-slim-bookworm
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-ENV DEBIAN_FRONTEND=noninteractive \
+# Le tag de l'image, rapporté par le worker à chaque prise (`image_tag`) : l'ordonnanceur
+# sait ainsi ce que tourne chaque machine. Posé par la CI (sha-<commit>), "dev" en local.
+ARG SPARK_IMAGE_TAG=dev
+ENV SPARK_IMAGE_TAG=${SPARK_IMAGE_TAG} \
+    DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \

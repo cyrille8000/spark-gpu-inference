@@ -21,6 +21,10 @@ FROM ${BASE}
 COPY src /app/src
 COPY vast_worker.py /app/vast_worker.py
 
+# Le tag de CETTE image (pas celui de la base), rapporté par le worker à chaque prise.
+ARG SPARK_IMAGE_TAG=vast-dev
+ENV SPARK_IMAGE_TAG=${SPARK_IMAGE_TAG}
+
 ENV SPARK_PROVIDER=vastai \
     SPARK_WORKER_PORT=8000 \
     # Combien de jobs à la fois. Vide : la CARTE décide, par tâche, d'après sa

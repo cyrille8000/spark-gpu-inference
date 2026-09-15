@@ -44,10 +44,20 @@ Détails du contrat : [README.md](README.md).
   qu'on ne la rebâtit pas. NE PAS toucher à `modal_app.py` ni `handler.py` : ils marchent, c'est la consigne.
 - **LE WORKER VA CHERCHER SON TRAVAIL** (`claim_url`, 2026-09-12) — il compte ses cartes, tient 2 places
   par carte TOUJOURS PLEINES, et redemande dès qu'une se libère. Rien à régler chez l'hébergeur : ni
-  `concurrency_modifier`, ni `@modal.concurrent`, ni variable d'environnement. File vide = il sort (jamais
-  de sondage : un worker qui attend est facturé à la milliseconde, cartes comprises). Le battement va vers
+  `concurrency_modifier`, ni `@modal.concurrent`, ni variable d'environnement. Le battement va vers
   NOTRE serveur, donc sa réponse porte l'ordre d'arrêt (`{"arret":"doux"|"net"}`) — extinction à distance
   sur les trois plateformes avec le même code. Détail : [docs/ARCHITECTURE_PRISE.md](docs/ARCHITECTURE_PRISE.md).
+- **FILE VIDE = IL ATTEND, IL NE SORT PLUS** (décision du propriétaire, 2026-09-15 — inverse celle du 12).
+  C'est l'ORDONNANCEUR qui monte et qui descend ; les hébergeurs sont réglés avec des coupures énormes.
+  Sur file vide le worker dort `attente_s` (donné par le serveur, défaut 15 s, max 300) puis redemande.
+  Il ne sort que sur `arret` ; `net` rend d'abord les résultats finis et la liste `abandonnes` (le serveur
+  les remet en file). Pas de budget par défaut (`budget_s` facultatif) ; l'homme-mort reste (5 min de
+  silence : on cesse, 15 min : on se tue). Chaque demande porte l'IDENTITÉ (`instance_id` — RunPod
+  `RUNPOD_POD_ID`, Modal `MODAL_TASK_ID`, Vast `VAST_CONTAINERLABEL`, ou `SPARK_INSTANCE_ID` posé par
+  l'ordonnanceur —, `machine_id`, `image_tag` posé au build, `demarre_a`, `uptime_s`) et l'AVANCEMENT de
+  chaque job en cours (`en_vol[]` : id du serveur, tâche, `elapsed_s`, `percent`) : c'est avec ça que
+  l'ordonnanceur décide de couper un worker cher. Sur Vast, `SPARK_CLAIM_URL` lance le pod directement
+  en prise (aucun port à ouvrir, aucun jeton de worker). À déployer EN DERNIER, après le bot.
 - **RunPod ne livre pas toujours ce qu'on demande** : endpoint réglé sur 4 cartes, workers à 3 ou 4 selon
   le moment — leur propre contrôle de démarrage le dit. C'est LA raison du mode prise : le serveur ne peut
   pas deviner, le worker sait.
