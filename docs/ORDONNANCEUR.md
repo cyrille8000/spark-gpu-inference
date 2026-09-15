@@ -173,8 +173,12 @@ machines qui ont refusé l'image ou rendu un résultat invalide vont en liste no
   visages) ;
 - le tirage de l'image n'est pas facturé en temps ; sa bande passante, à vérifier.
 
-On classe par **coût par job** et on retient la première machine qu'on peut remplir.
-C'est ce qui fait qu'une offre à 0,12 $/h peut perdre contre une à 0,60.
+**Dans l'ordre** : l'appel à l'API part avec les filtres ci-dessus et rend la liste **triée par
+prix**, le moins cher en premier. Sur les meilleures offres de cette liste, le bot recalcule
+le **coût par job** avec la formule, et retient la première machine qu'on peut remplir. La
+**bande passante** y pèse deux fois : comme filtre, et comme facteur de débit et de coût de
+transfert — à prix égal, la machine au meilleur réseau gagne. C'est ce qui fait qu'une offre
+à 0,12 $/h peut perdre contre une à 0,60.
 
 ---
 
