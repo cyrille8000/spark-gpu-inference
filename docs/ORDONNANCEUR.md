@@ -88,7 +88,11 @@ Ce que ça donne :
 - entre deux lots il décide qui reste chaud : Modal oui (crédit gratuit), RunPod et
   Vast seulement si 10 min d'attente, facturées à la seconde, coûtent moins qu'un
   redémarrage ;
-- un job posé pendant un lot attend le tick suivant.
+- un job posé pendant un lot attend le tick suivant ;
+- **sauf la voie express** : un projet dont le média total fait moins de 5 minutes (seuil
+  Doppler) n'attend pas le tick. Ses jobs sont prenables tout de suite et servis AVANT ceux
+  du lot ; un worker chaud les pioche dans la seconde, sinon le bot en démarre un aussitôt,
+  chez Modal en priorité. Le critère est la durée du projet, pas celle des jobs découpés.
 
 ---
 
