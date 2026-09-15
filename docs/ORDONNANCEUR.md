@@ -86,7 +86,8 @@ Ce que ça donne :
 - en cours de lot il ne fait que corriger : rajouter si ça traîne, couper si ça va
   plus vite que prévu ;
 - entre deux lots il décide qui reste chaud : Modal oui (crédit gratuit), RunPod et
-  Vast seulement si 10 min d'attente coûtent moins qu'un redémarrage ;
+  Vast seulement si 10 min d'attente, facturées à la seconde, coûtent moins qu'un
+  redémarrage ;
 - un job posé pendant un lot attend le tick suivant.
 
 ---
@@ -100,9 +101,10 @@ des workers, autant qu'il en faut, chez le moins cher qui a de la place. Une mac
 en cours de démarrage compte déjà, avec son heure d'arrivée prévue. Si la file se
 vide avant qu'elle arrive, il l'annule tant que c'est gratuit.
 
-**Éteindre.** Un worker inactif coûte (à la milliseconde sur Modal et RunPod, à
-l'heure sur Vast). Le bot le garde chaud tant que ça coûte moins qu'un redémarrage,
-puis l'éteint. Sur Vast, éteindre = détruire par l'API, sinon le disque se paie.
+**Éteindre.** Un worker inactif coûte, à la seconde près, chez les trois. Sur Vast c'est
+la machine entière, toutes ses cartes, tant que le pod existe. Le bot le garde chaud tant
+que ça coûte moins qu'un redémarrage, puis l'éteint. Sur Vast, éteindre = détruire par
+l'API, sinon le disque se paie encore.
 
 **Couper.** Un worker cher qui n'a plus qu'un job, et un worker moins cher déjà
 allumé et libre ? Garder coûte `prix × temps restant` ; déplacer coûte
@@ -118,17 +120,18 @@ on coupe. Un job coupé une fois ne l'est plus jamais.
 
 | | Modal | RunPod | Vast.ai |
 |---|---|---|---|
-| Prix | **0 tant qu'il reste du crédit** (6 comptes × 30 $/mois, renouvelé) | réel | prix de l'offre |
-| Capacité | 10 cartes par compte, 1 carte par worker | 20 workers × 4 cartes | sans plafond, machines à 1..12 cartes |
+| Prix | **0 tant qu'il reste du crédit** (6 comptes × 30 $/mois, renouvelé) | réel, à la seconde | prix de l'offre, à la seconde, machine entière |
+| Capacité | 10 cartes par compte, 1 carte par worker | 20 workers × 4 cartes | sans plafond ; machines de 1 à 12 cartes et plus, **aucune taille exclue** |
 | Démarrage | ~1 min | 20-30 s à chaud, jusqu'à 8 min à froid, **facturé** | 20 s si l'image est en cache, sinon minutes ; tirage gratuit |
 | Éteindre | `cancel` | `cancel` ; sinon idle timeout | `destroy` par l'API |
 | Ce que le bot surveille | crédit restant du mois | solde, temps de démarrage observés | solde, machines connues avec l'image en cache |
 
 Conséquence : Modal est le plancher gratuit, toujours rempli en premier. RunPod et
-Vast ne servent que les pics et les longues charges. Sur Vast, le bot choisit
-l'offre au **coût par job** (une 3090 bon marché a coûté plus cher à l'usage qu'une
-Blackwell), préfère une machine qui a déjà l'image, et retient la taille de machine
-d'après la part de travail qu'il lui donne.
+Vast ne servent que les pics et les longues charges. Sur Vast, le bot ne se limite à
+aucun nombre de cartes : il classe les offres au **débit par dollar** — ce qui traite le
+plus pour le moins cher (une 3090 bon marché a coûté plus cher à l'usage qu'une
+Blackwell ; deux cartes rendent ×2,3) — préfère une machine qui a déjà l'image, et ne
+prend une grosse machine que s'il a de quoi la remplir.
 
 ---
 
@@ -154,9 +157,12 @@ suivante. Rien n'est une constante.
   deux workers ne reçoivent jamais le même job.
 - Chaque réservation porte un jeton. Un résultat n'est accepté que du worker qui la
   tient ; un résultat en retard d'un worker déclaré mort est refusé.
-- Remise en file seulement sur `abandonnes` ou après expiration sans battement. Un job
-  ne tourne deux fois que si son worker est mort en plein calcul ; les sorties sont
-  idempotentes (même clé R2).
+- Remise en file seulement sur `abandonnes` ou après 15 min sans battement — les mêmes
+  15 min que l'homme-mort du worker, exprès : quand le serveur requeue, le worker a déjà
+  lâché. Un job ne tourne deux fois que si son worker est mort en plein calcul ; les
+  sorties sont idempotentes (même clé R2).
+- Panne du serveur : le worker garde ses résultats en attente et les livre au premier
+  contact réussi ; un résultat arrivé après le requeue est refusé.
 
 ---
 

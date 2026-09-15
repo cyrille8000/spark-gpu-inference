@@ -264,10 +264,14 @@ class Battement:
             rep = _demander(self.url, {**self.identite, "battement": True, **self.etat()},
                             essais=1)
             if rep.get("erreur"):
-                self._silence()
+                self.silence()
                 continue
             self._contact = time.monotonic()
             self.battus += 1
+            if self.arret == "silence":
+                # Le serveur est revenu : le silence est levé, la prise peut reprendre.
+                log.info("serveur de retour après un silence")
+                self.arret = None
             self.lire_ordre(rep)
 
     def lire_ordre(self, rep: dict) -> None:
@@ -488,6 +492,11 @@ def process_pull(inp: dict, job_id: str, progress: Progress | None = None) -> di
                 on_reprend = False
                 raison = ("arrêt demandé par le serveur" if bat.arret == "doux"
                           else "serveur muet trop longtemps")
+            if bat.arret is None and not on_reprend and raison == "serveur muet trop longtemps":
+                # Le serveur est revenu (un battement a réussi) : on reprend du travail.
+                log.info("[%s] serveur de retour — on reprend", job_id)
+                on_reprend = True
+                prochaine = 0.0
             libres = places - len(en_vol)
             attente = None
 
@@ -503,13 +512,15 @@ def process_pull(inp: dict, job_id: str, progress: Progress | None = None) -> di
                     rep = _demander(url, {**identite, **etat(), "libres": libres,
                                           "restant_s": None if restant is None else round(restant, 1),
                                           "resultats": a_rendre})
-                    a_rendre = []
                     if rep.get("erreur"):
-                        # Pas de sortie : le serveur peut revenir. L'homme-mort décide
-                        # seul si le silence dure (5 min : on cesse ; 15 min : on se tue).
+                        # Pas de sortie : le serveur peut revenir. Les résultats RESTENT
+                        # en attente (ils repartiront avec le prochain contact réussi).
+                        # L'homme-mort décide seul si le silence dure (5 min : on cesse ;
+                        # 15 min : on se tue, sauf sur Vast où l'on se tait).
                         bat.silence()
                         attente = ATTENTE_ERREUR_S
                     else:
+                        a_rendre = []
                         bat.contact()
                         # L'ordre d'arrêt voyage sur CE canal aussi : c'est celui qui
                         # existe déjà et qui est le plus fréquent.
@@ -534,6 +545,13 @@ def process_pull(inp: dict, job_id: str, progress: Progress | None = None) -> di
                     raison = ("arrêt demandé par le serveur" if bat.arret == "doux"
                               else "serveur muet trop longtemps")
                 if not on_reprend:
+                    if bat.arret == "silence" and os.environ.get("SPARK_PROVIDER", "") == "vastai":
+                        # Vast : sortir ne coûte que plus cher (conteneur relancé, pod
+                        # facturé). On se tait, on laisse le battement sonder, et on
+                        # reprendra si le serveur revient — sinon le balai détruira le pod.
+                        attentes += 1
+                        _dormir(ATTENTE_ERREUR_S, lambda: bat.arret != "silence")
+                        continue
                     break
                 attentes += 1
                 _dormir(max(0.0, prochaine - time.monotonic()), lambda: bat.arret is not None)

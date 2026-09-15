@@ -266,6 +266,60 @@ def test_sur_vast_l_homme_mort_ne_tue_pas(monkeypatch):
     assert quitte == [] and bat.arret == "silence"
 
 
+def test_un_envoi_rate_ne_perd_pas_les_resultats(monkeypatch):
+    """Les resultats qu'on tenait au moment d'une panne restent en attente et repartent
+    avec le premier contact reussi : rien de fini n'est perdu."""
+    etat = {"n": 0}
+    rendus: list[dict] = []
+
+    def serveur_qui_tousse(url, corps, essais=2):
+        etat["n"] += 1
+        rendus.extend(corps.get("resultats") or [])
+        if etat["n"] == 1:
+            return {"jobs": [{"task": "instrumental", "audio_url": "https://exemple/1.wav", "id": "srv-1"}]}
+        if etat["n"] == 2:
+            return {"erreur": "HTTP 503"}       # la demande qui portait le resultat echoue
+        return {"arret": "doux"}
+
+    monkeypatch.setattr(service, "ATTENTE_ERREUR_S", 0.05)
+    _prepare(monkeypatch, serveur_qui_tousse, ["cuda:0"], duree=0.05)
+    out = service.process_pull({"claim_url": "https://serveur/prise?sig=x"}, "w7c")
+    assert out["total"] == 1
+    assert [r["job_id"] for r in rendus] == ["srv-1", "srv-1"], \
+        "le resultat devait etre renvoye apres l'echec, une seule fois accepte"
+
+
+def test_sur_vast_le_worker_se_tait_puis_reprend_quand_le_serveur_revient(monkeypatch):
+    """Vast : passe le silence, on ne sort pas de la boucle (le conteneur serait relance et
+    le pod facture) ; on sonde doucement, et on reprend des que le serveur repond."""
+    monkeypatch.setenv("SPARK_PROVIDER", "vastai")
+    monkeypatch.setattr(service, "SILENCE_DOUX_S", 0.1)
+    monkeypatch.setattr(service, "SILENCE_NET_S", 0.2)
+    monkeypatch.setattr(service, "ATTENTE_ERREUR_S", 0.05)
+    monkeypatch.setattr(service, "BATTEMENT_MIN_S", 0.05)
+    quitte: list[int] = []
+    monkeypatch.setattr(service, "_quitter", lambda code: quitte.append(code))
+    t0 = time.monotonic()
+    etat = {"n": 0}
+
+    def panne_puis_retour(url, corps, essais=2):
+        etat["n"] += 1
+        if time.monotonic() - t0 < 0.5:
+            return {"erreur": "HTTP 503"}
+        if corps.get("battement"):
+            return {}
+        if etat.get("donne"):
+            return {"arret": "doux"}
+        etat["donne"] = True
+        return {"jobs": [{"task": "instrumental", "audio_url": "https://exemple/1.wav"}]}
+
+    _prepare(monkeypatch, panne_puis_retour, ["cuda:0"], duree=0.05)
+    out = service.process_pull({"claim_url": "https://serveur/prise?sig=x", "battement_s": 0.05}, "w7d")
+    assert quitte == [], "sur Vast on ne se tue pas"
+    assert out["total"] == 1, "il devait reprendre du travail au retour du serveur"
+    assert out["arret"] == "arrêt demandé par le serveur"
+
+
 def test_un_serveur_muet_pendant_un_job_finit_par_tuer_le_worker(monkeypatch):
     """Un job en cours et plus de serveur : passe le second seuil, l'homme-mort tue le
     processus meme en plein job — l'alternative est de payer les cartes jusqu'a la
