@@ -215,11 +215,39 @@ machines qui ont refusé l'image ou rendu un résultat invalide vont en liste no
 - le tirage de l'image n'est pas facturé en temps ; sa bande passante, à vérifier.
 
 **Dans l'ordre** : l'appel à l'API part avec les filtres ci-dessus et rend la liste **triée par
-prix**, le moins cher en premier. Sur les meilleures offres de cette liste, le bot recalcule
-le **coût par job** avec la formule, et retient la première machine qu'on peut remplir. La
-**bande passante** y pèse deux fois : comme filtre, et comme facteur de débit et de coût de
-transfert — à prix égal, la machine au meilleur réseau gagne. C'est ce qui fait qu'une offre
-à 0,12 $/h peut perdre contre une à 0,60.
+prix**, le moins cher en premier. Le bot garde les meilleures offres **de chaque taille** (1, 2,
+4, 8 cartes…), pour qu'une grosse machine soit toujours comparée aux petites. La **bande
+passante** pèse deux fois : comme filtre, et comme facteur de débit et de coût de transfert.
+
+### La taille de la machine suit la demande
+
+Le but n'est pas de louer beaucoup de petites machines (tranché le 2026-09-15). Pour chaque
+offre, le bot calcule, **au moment où elle arriverait** :
+
+1. **ce qui manque** : les places qu'il faudrait en plus pour vider la file en 5 minutes ;
+2. **ses places utiles** : ses places, sans dépasser ce qui manque. Au-delà, ce sont des cartes
+   payées à ne rien faire ;
+3. **son coût par job utile** : prix de la machine entière pendant son démarrage et les
+   5 minutes, plus le tirage de l'image si elle ne l'a pas (bande passante facturée), plus un
+   **coût fixe par machine louée** (gestion, risque de panne, par défaut 0,02 $), le tout
+   divisé par ses places utiles ;
+4. **les emplacements** : le nombre de machines Vast est plafonné. Si la demande, répartie sur
+   les emplacements restants, réclame plus de places qu'une machine n'en a, elle gaspille un
+   emplacement : elle est classée plus chère d'autant.
+
+La moins chère gagne ; à 5 % près, la plus grosse. Elle doit aussi passer la règle de
+rentabilité (assez de travail pour elle à son arrivée). Mesuré au banc, avec des cartes seules
+à 0,11 $/h et des machines de 8 cartes à 0,12 $/h la carte :
+
+| Demande | Avant | Maintenant |
+|---|---|---|
+| 20 jobs | 1 machine à 1 carte | 1 machine à 1 carte |
+| 60 jobs | 5 machines à 1 carte | 1 à 4 cartes + 1 à 1 carte |
+| 150 jobs | 5 à 1 carte + 1 à 8 | 1 à 8 + 1 à 4 + 1 à 2 |
+| 300 jobs | 10 machines, dont 7 à 1 carte | 3 à 8 cartes + 1 à 4 |
+
+Le coût payé varie de moins de 5 %. `SPARK_GPU_COUT_FIXE_MACHINE_USD` est le curseur : à 0, le
+bot ne regarde plus que le prix par carte.
 
 ---
 
@@ -362,7 +390,7 @@ le bot se teste de bout en bout sans allumer une seule carte.
 `SPARK_GPU_CLAIM_SECRET` (sinon `UPLOAD_JWT_SECRET`), `SPARK_GPU_REVEIL_S` (600),
 `SPARK_GPU_REVEIL_ANTICIPE_GPU_S` (1800), `SPARK_GPU_FILE_CIBLE_S` (300), `SPARK_GPU_FACTEUR_DEMARRAGE` (3),
 `SPARK_GPU_EXPRESS_MAX_S` (300), `SPARK_GPU_GRACE_MIN_S`/`MAX_S` (60/600), `SPARK_GPU_BUDGET_S` (17 700),
-`SPARK_GPU_MORT_S` (900), `SPARK_GPU_SOLDE_MIN_USD` (2) ; Modal : `SPARK_GPU_MODAL_ENDPOINT_URLS`, `_API_KEY`,
+`SPARK_GPU_MORT_S` (900), `SPARK_GPU_SOLDE_MIN_USD` (2), `SPARK_GPU_COUT_FIXE_MACHINE_USD` (0,02), `SPARK_GPU_VAST_IMAGE_GB` (5,34) ; Modal : `SPARK_GPU_MODAL_ENDPOINT_URLS`, `_API_KEY`,
 `_MAX_CONCURRENT` (10), `_BUDGET_USD` (29) ; RunPod : `SPARK_GPU_RUNPOD_API_KEY`, `_PRISE_ENDPOINT_ID`
 (sinon `_ENDPOINT_ID`), `_MAX_WORKERS` (20), `_CARTES` (4), `_PRICE_PER_HOUR` (2,76) ; Vast :
 `SPARK_GPU_VAST_API_KEY`, `_IMAGE` (par empreinte), `_MAX_WORKERS` (10), `_DISK_GB` (20), `_VRAM_MIN_MB` (16 000),
