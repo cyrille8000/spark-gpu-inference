@@ -70,8 +70,10 @@ def un_job(url: str, token: str, charge: dict, timeout: float, sonde_s: float = 
         "s": round(time.monotonic() - t0, 1),
         "ok": out.get("status") == "completed",
         "erreur": out.get("error"),
-        "inference_s": (out.get("timings") or {}).get("inference"),
-        "model_load_s": (out.get("timings") or {}).get("model_load"),
+        # L'image nomme ses etapes `<nom>_s` (tasks.Timer) : `inference_s`, pas `inference`.
+        "inference_s": (out.get("timings") or {}).get("inference_s"),
+        "model_load_s": (out.get("timings") or {}).get("model_load_s"),
+        "timings": out.get("timings") or {},
         "container_s": out.get("container_s"),
         "gpu_mem": out.get("gpu_mem"),
     }
@@ -84,7 +86,15 @@ def vague(url: str, token: str, charge: dict, n: int, timeout: float) -> dict:
     mur = round(time.monotonic() - t0, 1)
     ok = [r for r in res if r["ok"]]
     pics = [r["gpu_mem"]["reserved_gb"] for r in ok if r.get("gpu_mem")]
+    # Temps moyen de CHAQUE etape vue par l'image (telechargement, decodage, inference,
+    # encodage) : le temps de bout en bout seul ne dit pas ce qui ralentit.
+    etapes: dict[str, float] = {}
+    for cle in ("download_s", "decode_s", "inference_s", "encode_s", "upload_s"):
+        v = [r["timings"][cle] for r in ok if isinstance(r.get("timings"), dict) and r["timings"].get(cle) is not None]
+        if v:
+            etapes[cle] = round(statistics.mean(v), 1)
     return {
+        "etapes": etapes,
         "jobs": n, "reussis": len(ok), "mur_s": mur,
         "par_job_s": round(statistics.mean([r["s"] for r in ok]), 1) if ok else None,
         "debit_par_min": round(len(ok) / (mur / 60), 2) if mur > 0 and ok else 0,
@@ -98,6 +108,11 @@ def dire(r: dict) -> None:
           f"par job {r['par_job_s']} s - {r['mur_s'] / max(1, r['reussis']):.1f} s/job en file - "
           f"debit {r['debit_par_min']}/min - pic carte {r['pic_carte_gb']} Go"
           + (f" - ECHECS {r['erreurs']}" if r["erreurs"] else ""))
+    if r.get("etapes"):
+        e = r["etapes"]
+        noms = {"download_s": "telechargement", "decode_s": "decodage", "inference_s": "inference",
+                "encode_s": "encodage", "upload_s": "depot"}
+        print("          etapes moyennes par job : " + " - ".join(f"{noms[k]} {v} s" for k, v in e.items()))
     sys.stdout.flush()
 
 

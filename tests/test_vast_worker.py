@@ -39,6 +39,21 @@ def test_cartes_acceptees_et_refusees():
     assert carte_supportee("inconnu", arch) is False
 
 
+def test_toute_carte_au_dessus_du_minimum_passe():
+    """Une règle : capacité >= la plus petite compilée (7.5). Les roues cu128 n'embarquent
+    pas sm_89, et pourtant le L4 de Modal (Ada, 8.9) tourne avec cette image. Le worker Vast
+    exigeait le numéro exact et refusait toute carte Ada — RTX 6000 Ada louée deux fois pour
+    rien le 2026-09-15, conteneur relancé toutes les 12 s et facturé."""
+    reelle = ["sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120", "compute_120"]
+    for sm in ("sm_89", "sm_87"):                    # Ada (L4, 4090, L40S, 6000 Ada), Orin
+        assert carte_supportee(sm, reelle) is True
+    assert carte_supportee("sm_121", reelle) is True  # Blackwell plus récente que 12.0
+    assert carte_supportee("sm_130", reelle) is True  # génération future : le PTX la compile
+    assert carte_supportee("sm_70", reelle) is False  # V100 : 7.0 < 7.5
+    assert carte_supportee("sm_61", reelle) is False  # Pascal (P40, P100)
+    assert carte_supportee("sm_89", ["sm_90"]) is False  # sous le minimum de ces roues-là
+
+
 def test_capacite_minimale_lue_dans_les_roues():
     """Ce qui décide est la capacité de la CARTE, pas la version CUDA du pilote : le
     V100 refusé le 2026-09-12 tournait sur un pilote CUDA 13.0 et restait en 7.0."""

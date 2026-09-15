@@ -201,22 +201,36 @@ def memoire_carte() -> dict | None:
         return None
 
 
-def carte_supportee(sm: str, arch_list: list[str]) -> bool:
-    """L'architecture de la carte (`sm_86`) est-elle exécutable par ces roues torch ?
-
-    Vrai si elle est compilée telle quelle, ou si un PTX plus ancien est embarqué
-    (`compute_80` pour une `sm_86`) : le pilote le compile alors au premier noyau,
-    au prix de quelques secondes. Faux pour une carte plus ANCIENNE que tout ce
-    qui est embarqué — là, rien ne peut s'exécuter. Pur.
-    """
-    if sm in arch_list:
-        return True
+def _capacite_x10(code: str, prefixe: str) -> int | None:
+    """`sm_89` → 89 ; `sm_120` → 120 ; `compute_120` → 120 (capacité × 10). None si illisible."""
     try:
-        n = int(sm.removeprefix("sm_"))
+        return int(code.removeprefix(prefixe))
     except ValueError:
+        return None
+
+
+def carte_supportee(sm: str, arch_list: list[str]) -> bool:
+    """La carte (`sm_89`) est-elle exécutable par ces roues torch ?
+
+    UNE RÈGLE : sa capacité est au moins la plus petite compilée dans les roues (7.5 pour
+    torch 2.7.1+cu128), comme le filtre `compute_cap >= 750` de l'ordonnanceur (décision du
+    propriétaire, 2026-09-15). Au-dessus du minimum, toute carte réelle tourne : son numéro
+    est compilé (7.5, 8.0, 8.6, 9.0, 12.0), ou une version plus ancienne de sa génération
+    l'est (Ada 8.9 tourne avec le code 8.6 — le L4 de Modal le prouve chaque jour avec cette
+    image), ou le PTX embarqué la compile au premier lancement (au-delà de 12.0).
+
+    Avant, il fallait le numéro EXACT : toutes les cartes Ada (RTX 4090, L40, L40S, RTX 6000
+    Ada) étaient refusées, et le conteneur redémarrait en boucle, facturé (2026-09-15).
+    Le cas théorique d'une carte sans aucun code pour elle est attrapé par le vrai calcul
+    (`torch.mm`) que `verifier_carte` fait sur chaque carte. Pur.
+    """
+    carte = _capacite_x10(sm, "sm_")
+    if carte is None:
         return False
-    ptx = [int(a.removeprefix("compute_")) for a in arch_list if a.startswith("compute_")]
-    return any(p <= n for p in ptx)
+    compilees = [c for c in (_capacite_x10(a, "sm_") if a.startswith("sm_") else
+                             _capacite_x10(a, "compute_") if a.startswith("compute_") else None
+                             for a in arch_list) if c is not None]
+    return bool(compilees) and carte >= min(compilees)
 
 
 def capacite_minimale(arch_list: list[str]) -> str | None:
