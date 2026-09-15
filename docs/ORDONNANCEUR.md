@@ -84,6 +84,9 @@ Le 10 minutes n'est pas un rythme, c'est un **démarrage à froid**.
 4. Quand la file reste vide un certain temps, on repasse en sommeil. Le 10 minutes se
    réarme au prochain job.
 
+Le réveil vaut pour **toutes les tâches** : séparation, changement de voix lancé depuis
+le studio, visages. Seule la voie express y échappe (tranché le 2026-09-15).
+
 En croisière, la règle du bot est de **garder la file courte au meilleur coût** : il
 ajoute une machine quand le temps de vidage prévu dépasse un seuil, il coupe quand il
 repasse dessous. Le seuil est la question 1.
@@ -286,8 +289,7 @@ le bot se teste de bout en bout sans allumer une seule carte.
 
 1. **Cible d'attente en croisière** : combien de minutes de file tolère-t-on avant de payer une machine de plus ?
 2. **Période de grâce** d'un worker inactif, et temps de file vide avant de repasser en sommeil : la même durée, fixée par fournisseur, ou calculée par le bot d'après le rythme des arrivées ?
-7. **Le réveil à 10 minutes vaut pour toutes les tâches** (y compris le changement de voix lancé depuis le studio), ou certaines démarrent tout de suite ?
-8. **Les 10 minutes du réveil sont fixes**, ou le bot peut démarrer plus tôt quand la file est déjà grosse ?
+7. **Les 10 minutes du réveil sont fixes**, ou le bot peut démarrer plus tôt quand la file est déjà grosse ?
 3. **Durée max d'un job** : 2 minutes de GPU te va ?
 4. **Crédit Modal** : on le dépense dès qu'il y a du travail, sans le garder en réserve ?
 5. **Plafond Vast par jour**, en dollars.
