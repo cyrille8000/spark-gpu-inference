@@ -49,8 +49,8 @@ comparant des dollars.
 5. La file marque le job fini, prévient le workflow, écrit la consommation.
 6. Plus de jobs ? Le worker attend le temps que la file lui dit, puis redemande.
 
-Un job dure au plus deux minutes de GPU. C'est ce qui rend tout le reste simple :
-couper un worker coûte au pire un job.
+Un job dure au plus **deux minutes de GPU** (tranché le 2026-09-15). C'est ce qui rend
+tout le reste simple : couper un worker coûte au pire un job.
 
 ---
 
@@ -79,8 +79,10 @@ couper un worker coûte au pire un job.
 Le 10 minutes n'est pas un rythme, c'est un **démarrage à froid**.
 
 1. La file est vide depuis un moment : tout dort, aucun worker payant.
-2. Un premier job arrive. On laisse la file se remplir **10 minutes** avant de démarrer,
-   pour ne pas payer un démarrage de machine pour un seul job.
+2. Un premier job arrive. On laisse la file se remplir **jusqu'à 10 minutes** avant de
+   démarrer, pour ne pas payer un démarrage de machine pour un seul job. Si la file
+   devient grosse avant — plus de N minutes de GPU accumulées, réglage Doppler — le bot
+   démarre sans attendre la fin des 10 minutes (tranché le 2026-09-15).
 3. On démarre. À partir de là, **tout ce qui arrive est traité au fil de l'eau** : les
    workers piochent en continu, le bot ajuste la capacité en continu.
 4. Quand la file reste vide un certain temps, on repasse en sommeil. Le 10 minutes se
@@ -137,7 +139,7 @@ on coupe. Un job coupé une fois ne l'est plus jamais.
 | Capacité | 10 cartes par compte, 1 carte par worker | 20 workers × 4 cartes | sans plafond ; machines de 1 à 12 cartes et plus, **aucune taille exclue** |
 | Démarrage | ~1 min | 20-30 s à chaud, jusqu'à 8 min à froid, **facturé** | 20 s si l'image est en cache, sinon minutes ; tirage gratuit |
 | Éteindre | `cancel` | `cancel` ; sinon idle timeout | `destroy` par l'API |
-| Ce que le bot surveille | crédit restant du mois | solde, temps de démarrage observés | solde, machines connues avec l'image en cache |
+| Ce que le bot surveille | crédit restant du mois | **solde lu par l'API**, temps de démarrage observés | **solde lu par l'API**, machines connues avec l'image en cache |
 
 Conséquence : Modal est le plancher gratuit, toujours rempli en premier. RunPod et
 Vast ne servent que les pics et les longues charges. Sur Vast, le bot ne se limite à
@@ -249,8 +251,8 @@ son travail, jamais de quoi en faire un autre, et tout ce qu'elle rend est véri
   fait que sortir vers notre API. Sur Modal et RunPod, pareil.
 - L'image est désignée par empreinte (`@sha256`) : un hôte ne peut pas en substituer une.
   L'image est publique et ne contient aucun secret : la lire n'apprend rien.
-- Les clés des hébergeurs ne vivent que dans le bot (Doppler), avec un plafond de
-  dépense par jour et un journal de chaque démarrage, arrêt et location.
+- Les clés des hébergeurs ne vivent que dans le bot (Doppler), avec un journal de chaque
+  démarrage, arrêt et location.
 
 **Choix des machines Vast** (tranché le 2026-09-15) : **toutes les tâches** peuvent y aller,
 sur des machines de confiance (`verified`) et compatibles avec l'image (capacité de calcul et
@@ -269,8 +271,10 @@ Le propriétaire accepte ce risque avec les filtres ci-dessus.
 
 ## Les garde-fous
 
-- Plafond de dépense Vast par jour, plafond de workers par fournisseur, budget Modal
-  par compte — dans Doppler, coupe-circuit compris.
+- **Pas de plafond par jour : le solde est la limite** (tranché le 2026-09-15). RunPod et
+  Vast sont prépayés et leur API donne le crédit restant ; le bot le lit avant chaque
+  démarrage, n'engage jamais plus qu'il ne reste, et alerte sous un seuil. Budget Modal par
+  compte, plafond de workers par fournisseur et coupe-circuit restent dans Doppler.
 - Balai toutes les 3 minutes : toute instance Vast inconnue du registre est détruite.
 - Un worker coupé rend ses résultats avant de sortir ; rien de fini n'est perdu.
 - Un job abandonné repart en tête de file et ne peut plus être coupé.
@@ -296,7 +300,7 @@ le bot se teste de bout en bout sans allumer une seule carte.
 |---|---|
 | Image : prise, attente, `arret` doux/net, identité, avancement par job, `SPARK_CLAIM_URL` sur Vast | **écrit et testé**, non déployé (commit local) |
 | File, registre des workers, prédiction, décision, actions par API, branchement des workflows | **à écrire** |
-| Référence pour les appels API Vast, RunPod, Modal | le vieil orchestrateur Python de l'OCI (`runpod-ytdlp-manifest`) : à recopier, pas à réveiller |
+| Où ça tourne | **tout sur Cloudflare** (Workers, Durable Objects, D1, cron) ; l'OCI ne fait plus partie de l'architecture (tranché le 2026-09-15) |
 | Réglages à changer au déploiement | coupures Modal (`modal_app.py`, 900 s) et RunPod (`executionTimeout` 900 s côté backend) à porter à **5 h** ; le bot passe `budget_s` = 5 h − 5 min à chaque worker |
 
 ---
@@ -305,7 +309,8 @@ le bot se teste de bout en bout sans allumer une seule carte.
 
 1. **Cible d'attente en croisière** : combien de minutes de file tolère-t-on avant de payer une machine de plus ?
 2. **Période de grâce** d'un worker inactif, et temps de file vide avant de repasser en sommeil : la même durée, fixée par fournisseur, ou calculée par le bot d'après le rythme des arrivées ?
-6. **Les 10 minutes du réveil sont fixes**, ou le bot peut démarrer plus tôt quand la file est déjà grosse ?
-3. **Durée max d'un job** : 2 minutes de GPU te va ?
 4. **Crédit Modal** : on le dépense dès qu'il y a du travail, sans le garder en réserve ?
-5. **Plafond Vast par jour**, en dollars.
+
+Tranché le 2026-09-15 : un job = 2 min de GPU au plus ; le réveil démarre avant 10 min si la
+file est déjà grosse ; pas de plafond Vast par jour, le solde lu par l'API (Vast et RunPod)
+est la limite ; tout vit sur Cloudflare, plus d'OCI.
