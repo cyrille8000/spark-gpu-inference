@@ -477,3 +477,24 @@ def test_le_resume_porte_inference_depot_et_carte(monkeypatch):
     r = srv.rendus[0]
     assert r["inference_s"] == 7.5 and r["timings"]["upload_s"] == 0.4
     assert r["uploaded"] is True and r["bytes"] == 123 and r["gpu_name"] == "NVIDIA L4"
+
+
+@pytest.mark.parametrize("task", ["instrumental", "vc", "speaking_faces"])
+def test_chaque_job_rend_son_temps_d_inference_seul(monkeypatch, task):
+    """Chaque job, quelle que soit la tache et l'hebergeur, rend `inference_s` au premier
+    niveau : le calcul du modele SEUL — le telechargement et le chargement n'y sont pas."""
+    def faux(req, workdir, job_id, progress, timer):
+        with timer.step("download"):
+            time.sleep(0.05)
+        with timer.step("model_load"):
+            time.sleep(0.05)
+        with timer.step("inference"):
+            time.sleep(0.02)
+        return {}
+    for nom in ("instrumental", "vc", "speaking_faces"):
+        monkeypatch.setattr(tasks, f"_run_{nom}", faux)
+        monkeypatch.setattr(tasks, f"parse_{nom}", lambda inp: None)
+    r = tasks.run_task({"task": task}, "j1", lambda p: None)
+    assert r["status"] == "completed" and r["task"] == task
+    assert r["inference_s"] == r["timings"]["inference_s"]
+    assert 0.02 <= r["inference_s"] < 0.05

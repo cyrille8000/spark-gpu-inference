@@ -193,7 +193,7 @@ def _resume(r: dict) -> dict:
         "elapsed_s": r.get("elapsed_s"), "container_s": r.get("container_s"),
         # L'ordonnanceur apprend le débit sur l'INFÉRENCE seule (hors transferts) et
         # vérifie le dépôt : `inference_s`, `uploaded`, `bytes`, `gpu_name`, `timings`.
-        "inference_s": timings.get("inference_s"), "timings": timings,
+        "inference_s": r.get("inference_s", timings.get("inference_s")), "timings": timings,
         # Combien de jobs se sont croisés sur la carte pendant celui-ci : l'inférence
         # s'allonge avec eux, l'ordonnanceur en a besoin pour apprendre la vraie vitesse.
         "jobs_croises": (r.get("gpu_mem") or {}).get("jobs") if isinstance(r.get("gpu_mem"), dict) else None,
@@ -679,7 +679,8 @@ def process_job(inp: dict, job_id: str, progress: Progress | None = None) -> dic
     hb.start()
     try:
         result = run_task(inp, job_id, progress_and_pulse)
-        log.info("[%s] terminé en %.1f s", job_id, result.get("elapsed_s", 0.0))
+        log.info("[%s] terminé en %.1f s, dont inférence %s s", job_id, result.get("elapsed_s", 0.0),
+                 result.get("inference_s"))
     except InputError as e:
         log.warning("[%s] entrée refusée : %s", job_id, e)
         result = {"status": "error", "error": str(e), "code": "bad_input", "job_id": job_id}

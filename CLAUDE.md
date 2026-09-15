@@ -127,6 +127,11 @@ Détails du contrat : [README.md](README.md).
   chatterbox-tts est installé `--no-deps` pour ne pas embarquer gradio ; ses dépendances sont listées dans
   `requirements.txt`. `pip check` du Dockerfile bloque tout autre conflit.
 
+- **Temps d'inférence de CHAQUE job, au premier niveau du résultat** : `inference_s` (le calcul du modèle seul — ni
+  téléchargement, ni décodage, ni chargement, ni encodage, ni dépôt ; détail par étape dans `timings`), pour les trois
+  tâches et les trois hébergeurs, dans la réponse, le rappel `finished` et le résumé de prise (demande du propriétaire,
+  2026-09-15). Pour `speaking_faces`, l'inférence couvre toute l'analyse vidéo (scènes, détection, suivi, découpe,
+  score) : `timings.detect_s` et `timings.score_s` isolent les deux modèles.
 - **Temps conteneur rapporté, jamais estimé.** `container_s` (container_clock.py) = fenêtre depuis le rapport
   précédent ou le démarrage du processus, pas `elapsed_s` — mais le tirage et le démarrage du conteneur AVANT
   le processus sont facturés aussi et n'y sont pas. La plateforme facture

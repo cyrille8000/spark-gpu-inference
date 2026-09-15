@@ -281,6 +281,10 @@ def run_task(inp: dict, job_id: str, progress: Progress) -> dict:
             mem.update({"jobs": max(1, voisins, registry.active()), "clean": seul_au_depart})
         result.update({
             "status": "completed", "task": task, "job_id": job_id,
+            # Le temps de CALCUL du modèle seul, pour chaque job (demande du propriétaire,
+            # 2026-09-15) : ni téléchargement, ni décodage, ni chargement, ni encodage, ni dépôt.
+            # Un OOM rejoué compte ses deux passes : les deux ont occupé la carte.
+            "inference_s": timer.timings.get("inference_s"),
             "elapsed_s": timer.total(), "timings": timer.timings,
             "device": registry.device(), "gpu_name": registry.gpu_name(),
             "models_loaded": registry.loaded(), "pools": registry.pool_state(),
