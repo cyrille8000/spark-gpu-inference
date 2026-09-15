@@ -60,6 +60,9 @@ couper un worker coûte au pire un job.
 - Il **ne sort jamais de lui-même**. File vide : il attend `attente_s` et redemande.
 - Il obéit à `arret` : `doux` = finir ce qui tourne puis sortir ; `net` = rendre ce
   qui est fini, déclarer ce qu'il abandonne, sortir tout de suite.
+- Sur Modal et RunPod, l'hébergeur le coupe à **5 h** (réglage choisi). Le bot lui passe
+  donc `budget_s` = 5 h moins 5 min : à 4 h 55 il cesse de prendre, finit, sort. C'est un
+  relais planifié, pas une coupe, et le worker se protège seul même sans serveur.
 - À chaque demande il se présente : hébergeur, identifiant d'instance, image, démarré
   à, cartes, et l'avancement de chacun de ses jobs. C'est avec ça que le bot décide.
 - Homme-mort : 5 min sans serveur, il cesse de prendre ; 15 min, il se tue.
@@ -123,6 +126,34 @@ suivante. Rien n'est une constante.
 
 ---
 
+## Un job, un seul worker
+
+- La réservation se fait dans le Durable Object, qui traite ses requêtes une par une :
+  deux workers ne reçoivent jamais le même job.
+- Chaque réservation porte un jeton. Un résultat n'est accepté que du worker qui la
+  tient ; un résultat en retard d'un worker déclaré mort est refusé.
+- Remise en file seulement sur `abandonnes` ou après expiration sans battement. Un job
+  ne tourne deux fois que si son worker est mort en plein calcul ; les sorties sont
+  idempotentes (même clé R2).
+
+---
+
+## Sécurité : des machines qui ne sont pas à nous
+
+- Le worker ne reçoit **aucun secret** : une URL de prise signée, à durée limitée, liée
+  à son identité. Volée, elle ne donne que ses jobs, et le bot la révoque.
+- Les médias arrivent par tickets par job, courte durée : lecture de l'entrée, PUT de
+  la sortie. Pas de clé R2, Doppler ni hébergeur dans l'image.
+- Sur Vast en prise : aucun port ouvert, rien n'entre. L'image est louée par empreinte
+  (`@sha256`), un hôte ne peut pas la remplacer.
+- Ce qui revient est contrôlé : taille annoncée, en-tête, sha256, durée plausible.
+- **Limite qu'aucun code ne lève** : sur Vast, l'opérateur de la machine peut lire ce
+  que le conteneur traite (l'audio et la vidéo de l'utilisateur) et pourrait rendre un
+  résultat corrompu. Modal et RunPod sont des datacenters ; Vast, un particulier ou une
+  petite société. Voir la question 6.
+
+---
+
 ## Les garde-fous
 
 - Plafond de dépense Vast par jour, plafond de workers par fournisseur, budget Modal
@@ -153,7 +184,7 @@ le bot se teste de bout en bout sans allumer une seule carte.
 | Image : prise, attente, `arret` doux/net, identité, avancement par job, `SPARK_CLAIM_URL` sur Vast | **écrit et testé**, non déployé (commit local) |
 | File, registre des workers, prédiction, décision, actions par API, branchement des workflows | **à écrire** |
 | Référence pour les appels API Vast, RunPod, Modal | le vieil orchestrateur Python de l'OCI (`runpod-ytdlp-manifest`) : à recopier, pas à réveiller |
-| Réglages à changer au déploiement | coupures Modal (`modal_app.py`, 900 s) et RunPod (`executionTimeout` 900 s côté backend) à porter très haut |
+| Réglages à changer au déploiement | coupures Modal (`modal_app.py`, 900 s) et RunPod (`executionTimeout` 900 s côté backend) à porter à **5 h** ; le bot passe `budget_s` = 5 h − 5 min à chaque worker |
 
 ---
 
@@ -164,3 +195,5 @@ le bot se teste de bout en bout sans allumer une seule carte.
 3. **Durée max d'un job** : 2 minutes de GPU te va ?
 4. **Crédit Modal** : on le dépense dès qu'il y a du travail, sans le garder en réserve ?
 5. **Plafond Vast par jour**, en dollars.
+6. **Vast et la confidentialité** : on y envoie toutes les tâches en filtrant sur `verified`
+   et la fiabilité, ou seulement certaines ?
