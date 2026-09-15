@@ -19,7 +19,7 @@ from . import registry
 from .container_clock import CLOCK
 from .io_utils import InputError, check_url
 from .params import parse_callback, parse_heartbeat_s, parse_meta
-from .tasks import places_du_lot, places_pour_taches, run_task
+from .tasks import VRAM_UNE_PLACE_GB, places_du_lot, places_pour_taches, run_task
 from .webhooks import Heartbeat, JobWebhooks, now_iso
 
 log = logging.getLogger("spark.service")
@@ -413,6 +413,9 @@ def process_pull(inp: dict, job_id: str, progress: Progress | None = None) -> di
 
     cartes = registry.devices()
     par_carte = max(1, int(inp.get("jobs_par_carte") or JOBS_PAR_CARTE))
+    vram = registry.vram_total_gb()
+    if vram and vram < VRAM_UNE_PLACE_GB:
+        par_carte = 1   # carte de 16 a 22 Go : une seule place, quoi qu'en dise le serveur
     places = par_carte * len(cartes)
     budget = _budget(inp)
     debut = time.monotonic()

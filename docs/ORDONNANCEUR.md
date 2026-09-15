@@ -153,16 +153,17 @@ peut exécuter, quel que soit le nom de la carte :
 |---|---|---|
 | capacité de calcul | ≥ 7,5 | les roues torch 2.7.1 + CUDA 12.8 (un V100 est refusé, même sur pilote récent) |
 | pilote `cuda_max_good` | ≥ 12.8 | l'image embarque CUDA 12.8 |
-| VRAM par carte | ≥ 24 Go | une séparation prend ~4 Go, on en veut plusieurs par carte |
+| VRAM par carte | ≥ 16 Go | de 16 à 22 Go la carte ne tient qu'**une place** (tranché le 2026-09-15) ; à partir de 24 Go la mémoire décide du nombre de places |
 | cœurs CPU | plancher 4, puis facteur de coût | le décodage et l'encodage tournent sur CPU ; en dessous la carte dort |
 | débit réseau | plancher 500 Mb/s, puis facteur de coût | 13 Mo par job (0,2 s à 500 Mb/s) ; le tirage de l'image passe de 20 s à 85 s, c'est du temps de démarrage, pas de la qualité |
 | disque | ≥ 15 Go | l'image fait 5,3 Go compressés |
 | `verified` | oui | tranché |
 | fiabilité | plancher 0,80, puis facteur de coût | une machine moins fiable est classée un peu plus chère (risque de refaire des jobs), pas exclue |
 
-Mesuré le 2026-09-15 sur l'API : 514 machines compatibles ; avec des seuils stricts (CPU 8,
-2 Gb/s, fiabilité 0,90) il n'en restait que 268, presque tout perdu sur le réseau ; avec ces
-planchers souples, **477**. Trop de filtre, plus de machine — c'est la formule qui départage.
+Mesuré le 2026-09-15 sur l'API : 514 machines compatibles à 24 Go ; avec des seuils stricts
+(CPU 8, 2 Gb/s, fiabilité 0,90) il n'en restait que 268, presque tout perdu sur le réseau ;
+avec les planchers souples, 477 ; en acceptant 16 Go, **608**. La version CUDA, elle, n'écarte
+que 76 machines. Trop de filtre, plus de machine — c'est la formule qui départage.
 
 Le filtre `gpu_name` de l'API Vast est ignoré par Vast : on trie côté client. Les
 machines qui ont refusé l'image ou rendu un résultat invalide vont en liste noire.

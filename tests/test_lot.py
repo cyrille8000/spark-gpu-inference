@@ -89,6 +89,15 @@ def test_places_calculees_sur_la_tache_la_plus_gourmande(monkeypatch):
     assert tasks.places_pour_taches(["quoi"]) == 1
 
 
+def test_une_carte_de_16_a_22_go_ne_tient_qu_une_place():
+    """Decision du 2026-09-15 : ces cartes sont acceptees sur Vast mais jamais empilees."""
+    for vram in (17.2, 20.0, 21.5, 22.9):
+        for modele in ("bs_roformer_leap_xe", "chatterbox_vc", "lr_asd"):
+            assert tasks.jobs_pour_vram(modele, vram) == 1, (modele, vram)
+    assert tasks.jobs_pour_vram("bs_roformer_leap_xe", 23.66) == 5   # L4 : la formule reprend
+    assert tasks.jobs_pour_vram("chatterbox_vc", 17.2, force="3") == 3   # le serveur peut forcer
+
+
 def test_places_multipliees_par_le_nombre_de_cartes(monkeypatch):
     monkeypatch.delenv("SPARK_JOBS_PER_GPU", raising=False)
     monkeypatch.setattr(tasks.registry, "vram_total_gb", lambda: 24.0)

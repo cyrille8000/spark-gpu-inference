@@ -99,15 +99,19 @@ def test_jobs_deduits_de_la_carte():
     # 23,66), la 6e déborde ; 8 conversions vocales tiennent (17,29 Go) sans être poussées.
     assert jobs_pour_vram("bs_roformer_leap_xe", 24.0) == 5
     assert jobs_pour_vram("chatterbox_vc", 24.0) == 9
-    # Le même calcul sur 22,5 Go reste prudent d'un cran, comme il doit l'être.
-    assert jobs_pour_vram("bs_roformer_leap_xe", 22.5) == 4
-    assert jobs_pour_vram("chatterbox_vc", 22.5) == 8
+    # Sous 23 Go (une carte « 22 Go », un L4 en dessous de sa mémoire réelle) : UNE place,
+    # décision du propriétaire du 2026-09-15 — ces cartes sont acceptées, jamais empilées.
+    assert jobs_pour_vram("bs_roformer_leap_xe", 22.5) == 1
+    # Le L4 tel que torch le rapporte (23,66 Go) reste sur la mesure : 5 séparations.
+    assert jobs_pour_vram("bs_roformer_leap_xe", 23.66) == 5
+    assert jobs_pour_vram("chatterbox_vc", 22.5) == 1
     # Grosse carte : la mémoire décide, PLUS AUCUN plafond arbitraire. Une carte de
     # 80 Go ne doit pas être bridée comme une de 24 (décision du propriétaire).
     assert jobs_pour_vram("bs_roformer_leap_xe", 80.0) == 17
     assert jobs_pour_vram("chatterbox_vc", 80.0) == 32
-    # 12 Go : deux séparations tiennent (9,4 Go mesurés à deux).
-    assert jobs_pour_vram("bs_roformer_leap_xe", 12.0) == 2
+    # 12 Go : deux séparations tiendraient (9,4 Go mesurés à deux), mais sous 23 Go c'est
+    # une place — et sous 16 Go la carte est de toute façon refusée en amont (SPARK_MIN_VRAM_GB).
+    assert jobs_pour_vram("bs_roformer_leap_xe", 12.0) == 1
     # Carte trop petite pour deux : jamais moins d'un job, même si le calcul dit zéro.
     assert jobs_pour_vram("bs_roformer_leap_xe", 6.0) == 1
     # 8 Go : une seule conversion vocale — la part fixe (5 Go) mange la carte. Une carte

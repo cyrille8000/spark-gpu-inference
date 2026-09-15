@@ -99,6 +99,10 @@ class Sortie(Exception):
 def _prepare(monkeypatch, serveur, cartes, duree=0.0, durees_par_job=None):
     monkeypatch.setattr(service, "_demander", serveur)
     monkeypatch.setattr(tasks.registry, "vram_total_gb", lambda: 24.0)
+    # `vast_worker.py` pose SPARK_PROVIDER=vastai a l'import, et pytest importe TOUS les
+    # modules de test avant de les executer : sans ceci, l'homme-mort « se tait au lieu de
+    # se tuer » de Vast s'appliquerait ici et un test d'arret ne finirait jamais.
+    monkeypatch.setenv("SPARK_PROVIDER", "test")
     registry._cartes_cache = list(cartes)
     compte = {"n": 0}
     verrou = threading.Lock()
@@ -129,6 +133,14 @@ def test_la_capacite_suit_les_cartes_trouvees(monkeypatch):
         assert srv.demandes[0]["places"] == attendu
         assert srv.demandes[0]["libres"] == attendu
         assert srv.demandes[0]["cartes"] == cartes
+
+
+def test_une_carte_de_16_go_n_ouvre_qu_une_place_en_prise(monkeypatch):
+    srv = FauxServeur(0)
+    _prepare(monkeypatch, srv, ["cuda:0", "cuda:1"])
+    monkeypatch.setattr(tasks.registry, "vram_total_gb", lambda: 17.2)
+    out = service.process_pull({"claim_url": "https://serveur/prise?sig=x", "jobs_par_carte": 2}, "w1c")
+    assert out["places"] == 2, "deux cartes de 16 Go = deux places, pas quatre"
 
 
 def test_l_identite_voyage_avec_chaque_demande(monkeypatch):
@@ -314,6 +326,7 @@ def test_sur_vast_le_worker_se_tait_puis_reprend_quand_le_serveur_revient(monkey
         return {"jobs": [{"task": "instrumental", "audio_url": "https://exemple/1.wav"}]}
 
     _prepare(monkeypatch, panne_puis_retour, ["cuda:0"], duree=0.05)
+    monkeypatch.setenv("SPARK_PROVIDER", "vastai")   # APRES _prepare, qui pose un fournisseur neutre
     out = service.process_pull({"claim_url": "https://serveur/prise?sig=x", "battement_s": 0.05}, "w7d")
     assert quitte == [], "sur Vast on ne se tue pas"
     assert out["total"] == 1, "il devait reprendre du travail au retour du serveur"

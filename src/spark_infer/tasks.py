@@ -115,6 +115,11 @@ MARGE = 0.85
 # cinq. Si un hébergeur coupe un job trop long (900 s chez Modal), c'est à LUI de
 # baisser le plafond par `SPARK_JOBS_MAX`, pas à la table de le faire pour tout le monde.
 PLAFOND_DEFAUT = 32
+# Cartes de 16 a 22 Go : UNE place, quelle que soit la tache (decision du proprietaire,
+# 2026-09-15 : elles sont acceptees sur Vast, on ne les empile pas). Seuil en Go tels que
+# torch les rapporte (total_memory / 1e9) : une carte « 24 Go » en annonce 23,6 a 25,4
+# (L4 23,66, 3090 25,3), une « 16 Go » 17,2, une « 20 Go » 21,5.
+VRAM_UNE_PLACE_GB = 23.0
 
 
 def jobs_pour_vram(modele: str, vram_gb: float | None, force: str | None = None,
@@ -133,6 +138,8 @@ def jobs_pour_vram(modele: str, vram_gb: float | None, force: str | None = None,
         except ValueError:
             pass
     if not vram_gb or vram_gb <= 0:
+        return 1
+    if vram_gb < VRAM_UNE_PLACE_GB:
         return 1
     base, par_job = COUT_MEMOIRE_GB.get(modele, COUT_INCONNU_GB)
     reste = vram_gb * MARGE - base
