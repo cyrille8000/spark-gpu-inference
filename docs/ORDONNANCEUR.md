@@ -157,7 +157,8 @@ peut exécuter, quel que soit le nom de la carte :
 | cœurs CPU | ≥ 8 | le décodage et l'encodage tournent sur CPU ; en dessous la carte dort |
 | débit réseau | ≥ 2 Gb/s | 13 Mo par job en entrée |
 | disque | ≥ 20 Go | l'image fait 5,3 Go compressés |
-| `verified`, fiabilité | oui, ≥ 0,97 | |
+| `verified` | oui | |
+| fiabilité | plancher bas (≥ 0,90), puis **facteur de coût** | trop strict, on ne trouve plus de machine ; une machine moins fiable est classée un peu plus chère (risque de refaire des jobs), pas exclue |
 
 Le filtre `gpu_name` de l'API Vast est ignoré par Vast : on trie côté client. Les
 machines qui ont refusé l'image ou rendu un résultat invalide vont en liste noire.
@@ -241,9 +242,11 @@ son travail, jamais de quoi en faire un autre, et tout ce qu'elle rend est véri
   dépense par jour et un journal de chaque démarrage, arrêt et location.
 
 **Choix des machines Vast** (tranché le 2026-09-15) : **toutes les tâches** peuvent y aller,
-sur des machines de confiance et fiables — `verified`, fiabilité ≥ 0,97 — et compatibles avec
-l'image (capacité de calcul et version CUDA du pilote, cf. « Choisir une machine Vast ») pour
-ne pas planter. Liste noire des machines qui ont refusé l'image ou rendu un résultat invalide.
+sur des machines de confiance (`verified`) et compatibles avec l'image (capacité de calcul et
+version CUDA du pilote, cf. « Choisir une machine Vast ») pour ne pas planter. La fiabilité
+n'est pas une barrière — trop stricte, on ne trouverait plus de machine — mais un facteur du
+classement au coût. Liste noire des machines qui ont refusé l'image ou rendu un résultat
+invalide.
 
 **Limite qu'aucun code ne lève** : sur Vast, l'opérateur de la machine peut lire ce que
 le conteneur traite (l'audio et la vidéo de l'utilisateur) et pourrait rendre un
