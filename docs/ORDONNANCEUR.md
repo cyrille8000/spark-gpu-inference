@@ -240,14 +240,16 @@ son travail, jamais de quoi en faire un autre, et tout ce qu'elle rend est véri
 - Les clés des hébergeurs ne vivent que dans le bot (Doppler), avec un plafond de
   dépense par jour et un journal de chaque démarrage, arrêt et location.
 
-**Choix des machines Vast** : `verified` et fiabilité ≥ 0,97 seulement, liste noire des
-machines qui ont refusé l'image ou rendu un résultat invalide.
+**Choix des machines Vast** (tranché le 2026-09-15) : **toutes les tâches** peuvent y aller,
+sur des machines de confiance et fiables — `verified`, fiabilité ≥ 0,97 — et compatibles avec
+l'image (capacité de calcul et version CUDA du pilote, cf. « Choisir une machine Vast ») pour
+ne pas planter. Liste noire des machines qui ont refusé l'image ou rendu un résultat invalide.
 
 **Limite qu'aucun code ne lève** : sur Vast, l'opérateur de la machine peut lire ce que
 le conteneur traite (l'audio et la vidéo de l'utilisateur) et pourrait rendre un
 résultat corrompu — le contrôle de plausibilité attrape le grossier, pas le subtil.
 Modal et RunPod sont des datacenters ; Vast, un particulier ou une petite société.
-Voir la question 6.
+Le propriétaire accepte ce risque avec les filtres ci-dessus.
 
 ---
 
@@ -289,9 +291,7 @@ le bot se teste de bout en bout sans allumer une seule carte.
 
 1. **Cible d'attente en croisière** : combien de minutes de file tolère-t-on avant de payer une machine de plus ?
 2. **Période de grâce** d'un worker inactif, et temps de file vide avant de repasser en sommeil : la même durée, fixée par fournisseur, ou calculée par le bot d'après le rythme des arrivées ?
-7. **Les 10 minutes du réveil sont fixes**, ou le bot peut démarrer plus tôt quand la file est déjà grosse ?
+6. **Les 10 minutes du réveil sont fixes**, ou le bot peut démarrer plus tôt quand la file est déjà grosse ?
 3. **Durée max d'un job** : 2 minutes de GPU te va ?
 4. **Crédit Modal** : on le dépense dès qu'il y a du travail, sans le garder en réserve ?
 5. **Plafond Vast par jour**, en dollars.
-6. **Vast et la confidentialité** : on y envoie toutes les tâches en filtrant sur `verified`
-   et la fiabilité, ou seulement certaines ?
