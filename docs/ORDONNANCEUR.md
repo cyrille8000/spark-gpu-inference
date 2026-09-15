@@ -49,8 +49,10 @@ comparant des dollars.
 5. La file marque le job fini, prévient le workflow, écrit la consommation.
 6. Plus de jobs ? Le worker attend le temps que la file lui dit, puis redemande.
 
-Un job dure au plus **deux minutes de GPU** (tranché le 2026-09-15). C'est ce qui rend
-tout le reste simple : couper un worker coûte au pire un job.
+Un job dure au plus **deux minutes d'inférence GPU réelle** — hors téléchargement,
+décodage, encodage et envoi, qui ne comptent pas (tranché le 2026-09-15). C'est ce qui
+rend tout le reste simple : couper un worker coûte au pire un job. Le worker rend pour
+chaque job son temps d'inférence à part : c'est lui qui nourrit le débit par carte.
 
 ---
 
@@ -91,9 +93,24 @@ Le 10 minutes n'est pas un rythme, c'est un **démarrage à froid**.
 Le réveil vaut pour **toutes les tâches** : séparation, changement de voix lancé depuis
 le studio, visages. Seule la voie express y échappe (tranché le 2026-09-15).
 
-En croisière, la règle du bot est de **garder la file courte au meilleur coût** : il
-ajoute une machine quand le temps de vidage prévu dépasse un seuil, il coupe quand il
-repasse dessous. Le seuil est la question 1.
+En croisière, la règle du bot est de **garder la file courte au meilleur coût**
+(proposition, question 1) :
+
+- **Modal, tant qu'il a du crédit** : la file doit rester à zéro. Le bot ouvre autant de
+  conteneurs qu'il faut pour vider ce qui attend dans le temps d'un démarrage (≈ 1 min),
+  jusqu'aux 60 cartes. Le crédit est dépensé dès qu'il y a du travail, sans réserve.
+- **RunPod et Vast** : on démarre une machine de plus seulement si, **à son arrivée
+  prévue**, il lui restera au moins `max(5 min, 3 × son démarrage facturé)` de travail.
+  Le 5 min est la file tolérée (Doppler, même seuil que l'express) ; le ×3 garantit qu'un
+  démarrage payé ne dépasse jamais un quart de ce que la machine produit. Une machine
+  RunPod froide (8 min facturés) exige donc 24 min de travail devant elle ; une machine
+  Vast qui a l'image (20 s) part pour 5 min de file.
+- **Couper** : dès que le vidage prévu repasse sous la cible sans elle, la machine la plus
+  chère par place passe en grâce (ci-dessous), puis s'éteint.
+
+Ordre de grandeur mesuré : une heure de vidéo = 24 séparations de 150 s ; sur un L4 ça fait
+≈ 20 min de carte (56 s par job, le parallélisme n'y rend que ×1,15), sur les 10 cartes d'un
+compte Modal ≈ 2 min.
 
 **Voie express** : un projet dont le média total fait moins de 5 minutes (seuil Doppler)
 n'attend pas les 10 minutes du réveil. Ses jobs sont prenables tout de suite et servis
@@ -117,9 +134,23 @@ en cours de démarrage compte déjà, avec son heure d'arrivée prévue. Si la f
 vide avant qu'elle arrive, il l'annule tant que c'est gratuit.
 
 **Éteindre.** Un worker inactif coûte, à la seconde près, chez les trois. Sur Vast c'est
-la machine entière, toutes ses cartes, tant que le pod existe. Le bot le garde chaud tant
-que ça coûte moins qu'un redémarrage, puis l'éteint. Sur Vast, éteindre = détruire par
-l'API, sinon le disque se paie encore.
+la machine entière, toutes ses cartes, tant que le pod existe. Sur Vast, éteindre = détruire
+par l'API, sinon le disque se paie encore. **Grâce et sommeil** (proposition, question 2) :
+
+- la **grâce** d'un worker inactif = **ce que coûterait le redémarrer**, en secondes de sa
+  propre facturation, telle que le bot l'a observée chez cet hébergeur : ≈ 1 min sur Modal,
+  20-30 s à chaud et jusqu'à 8 min à froid sur RunPod, 20 s sur Vast si l'image est en cache.
+  Plancher 1 min, plafond 10 min (Doppler). Attendre exactement le prix d'un redémarrage
+  est la règle classique du « louer ou acheter » : quoi qu'il arrive ensuite, on ne paie
+  jamais plus du double de l'optimal, sans rien prédire. Le bot n'a donc pas à deviner le
+  rythme des arrivées ; s'il sait qu'un job arrive (projet en cours de découpe), il prolonge.
+- entre plusieurs workers inactifs, on coupe **le plus cher par place d'abord** ; un Modal
+  gratuit est le dernier à partir.
+- **le dernier worker vivant** attend plus longtemps : **5 min** (Doppler). Le garder évite
+  aux jobs de traîne (une conversion relancée depuis le studio, la fin d'un découpage) de
+  retomber dans les 10 min du réveil, pour quelques centimes. De préférence un Modal.
+- **le sommeil n'a pas d'horloge à lui** : dormir, c'est n'avoir plus aucun worker et une
+  file vide. Quand le dernier worker s'éteint, on dort ; le prochain job réarme les 10 min.
 
 **Couper.** Un worker cher qui n'a plus qu'un job, et un worker moins cher déjà
 allumé et libre ? Garder coûte `prix × temps restant` ; déplacer coûte
@@ -135,7 +166,7 @@ on coupe. Un job coupé une fois ne l'est plus jamais.
 
 | | Modal | RunPod | Vast.ai |
 |---|---|---|---|
-| Prix | **0 tant qu'il reste du crédit** (6 comptes × 30 $/mois, renouvelé) | réel, à la seconde | prix de l'offre, à la seconde, machine entière |
+| Prix | **0 tant qu'il reste du crédit** (6 comptes × 30 $/mois, renouvelé), dépensé dès qu'il y a du travail, sans réserve (tranché) | réel, à la seconde | prix de l'offre, à la seconde, machine entière |
 | Capacité | 10 cartes par compte, 1 carte par worker | 20 workers × 4 cartes | sans plafond ; machines de 1 à 12 cartes et plus, **aucune taille exclue** |
 | Démarrage | ~1 min | 20-30 s à chaud, jusqu'à 8 min à froid, **facturé** | 20 s si l'image est en cache, sinon minutes ; tirage gratuit |
 | Éteindre | `cancel` | `cancel` ; sinon idle timeout | `destroy` par l'API |
@@ -307,10 +338,16 @@ le bot se teste de bout en bout sans allumer une seule carte.
 
 ## Ce que je te demande de trancher
 
-1. **Cible d'attente en croisière** : combien de minutes de file tolère-t-on avant de payer une machine de plus ?
-2. **Période de grâce** d'un worker inactif, et temps de file vide avant de repasser en sommeil : la même durée, fixée par fournisseur, ou calculée par le bot d'après le rythme des arrivées ?
-4. **Crédit Modal** : on le dépense dès qu'il y a du travail, sans le garder en réserve ?
+Deux propositions à valider, écrites dans le corps du document :
 
-Tranché le 2026-09-15 : un job = 2 min de GPU au plus ; le réveil démarre avant 10 min si la
-file est déjà grosse ; pas de plafond Vast par jour, le solde lu par l'API (Vast et RunPod)
-est la limite ; tout vit sur Cloudflare, plus d'OCI.
+1. **Croisière** : Modal vide la file à zéro tant qu'il a du crédit ; une machine payante
+   ne démarre que si, à son arrivée, il lui reste `max(5 min, 3 × son démarrage facturé)` de
+   travail (« Le rythme »).
+2. **Grâce** = le prix d'un redémarrage observé, entre 1 et 10 min ; le plus cher coupé en
+   premier ; le dernier worker garde 5 min ; le sommeil n'a pas d'horloge à lui
+   (« Ce que décide le bot », Éteindre).
+
+Tranché le 2026-09-15 : un job = 2 min d'inférence GPU réelle au plus, hors transferts ; le
+réveil démarre avant 10 min si la file est déjà grosse ; pas de plafond Vast par jour, le
+solde lu par l'API (Vast et RunPod) est la limite ; le crédit Modal se dépense dès qu'il y
+a du travail, sans réserve ; tout vit sur Cloudflare, plus d'OCI.
