@@ -419,3 +419,55 @@ def test_process_job_reconnait_la_prise(monkeypatch):
     _prepare(monkeypatch, srv, ["cuda:0"])
     out = service.process_job({"claim_url": "https://serveur/prise?sig=x"}, "w11")
     assert out.get("prise") is True and out["total"] == 2
+
+
+def test_le_serveur_renouvelle_l_url_de_prise(monkeypatch):
+    """Une reponse qui porte `claim_url` change l'URL de TOUTES les demandes suivantes
+    (prises, battements, `fin`) : le serveur renouvelle avant l'expiration."""
+    urls: list[str] = []
+
+    class Srv(FauxServeur):
+        def __call__(self, url, corps, essais=2):
+            urls.append(url)
+            rep = super().__call__(url, corps, essais)
+            if len(self.demandes) == 1:
+                rep["claim_url"] = "https://serveur/prise?sig=nouvelle"
+            return rep
+
+    srv = Srv(2, ids=True)
+    _prepare(monkeypatch, srv, ["cuda:0"])
+    out = service.process_pull({"claim_url": "https://serveur/prise?sig=x"}, "w9")
+    assert out["total"] == 2
+    assert urls[0] == "https://serveur/prise?sig=x"
+    assert len(urls) >= 3 and all(u == "https://serveur/prise?sig=nouvelle" for u in urls[1:]), urls
+
+
+def test_une_url_renouvelee_invalide_est_ignoree(monkeypatch):
+    class Srv(FauxServeur):
+        def __call__(self, url, corps, essais=2):
+            rep = super().__call__(url, corps, essais)
+            rep["claim_url"] = "ftp://pas-http"
+            return rep
+
+    srv = Srv(1, ids=True)
+    _prepare(monkeypatch, srv, ["cuda:0"])
+    bat = service.Battement("https://serveur/prise?sig=x", {}, dict, 10.0)
+    bat.adopter_url({"claim_url": "ftp://pas-http"})
+    assert bat.url == "https://serveur/prise?sig=x"
+    bat.adopter_url({"claim_url": "https://serveur/prise?sig=ok"})
+    assert bat.url == "https://serveur/prise?sig=ok"
+
+
+def test_le_resume_porte_inference_depot_et_carte(monkeypatch):
+    """Ce que le serveur recoit par job : l'inference SEULE (hors transferts), le depot
+    verifie, les octets, la carte — de quoi apprendre le debit et facturer."""
+    srv = FauxServeur(1, ids=True)
+    _prepare(monkeypatch, srv, ["cuda:0"])
+    monkeypatch.setattr(service, "run_task", lambda inp, job_id, progress: {
+        "status": "completed", "task": inp.get("task"), "job_id": job_id,
+        "timings": {"download_s": 1.0, "inference_s": 7.5, "upload_s": 0.4},
+        "uploaded": True, "bytes": 123, "gpu_name": "NVIDIA L4", "meta": inp.get("meta")})
+    service.process_pull({"claim_url": "https://serveur/prise?sig=x"}, "w10")
+    r = srv.rendus[0]
+    assert r["inference_s"] == 7.5 and r["timings"]["upload_s"] == 0.4
+    assert r["uploaded"] is True and r["bytes"] == 123 and r["gpu_name"] == "NVIDIA L4"

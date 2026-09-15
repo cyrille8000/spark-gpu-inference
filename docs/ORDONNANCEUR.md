@@ -1,8 +1,8 @@
 # L'ordonnanceur GPU — comment ça marche, en clair
 
-Proposition au 2026-09-15, à valider avant d'écrire. Rien de ce qui suit n'existe
-encore côté serveur. Côté image, les workers savent déjà tout faire de ce que ce
-document leur demande (voir « Où on en est »).
+Tranché le 2026-09-15 et **écrit le même jour** : le bot vit dans le worker Cloudflare
+`spark-dubbing-api` (Durable Object `GpuScheduler`, dossier `src/gpu-scheduler/`), testé
+par 41 tests et un simulateur ; rien n'est déployé (voir « Où on en est »).
 
 ---
 
@@ -329,23 +329,70 @@ le bot se teste de bout en bout sans allumer une seule carte.
 
 | | État |
 |---|---|
-| Image : prise, attente, `arret` doux/net, identité, avancement par job, `SPARK_CLAIM_URL` sur Vast | **écrit et testé**, non déployé (commit local) |
-| File, registre des workers, prédiction, décision, actions par API, branchement des workflows | **à écrire** |
+| Image : prise, attente, `arret` doux/net, identité, avancement par job, `SPARK_CLAIM_URL` sur Vast, `inference_s` et dépôt dans chaque résumé, URL de prise renouvelée | **écrit et testé** (24 tests de prise), non déployé (commit local) |
+| Bot : file, prise signée, registre, prévision, décision, actions Modal/RunPod/Vast, comptes, balai, statut | **écrit et testé** (41 tests + simulateur), non déployé (commit local) |
+| Branchement des workflows (séparation, changement de voix) | **écrit**, derrière `SPARK_GPU_SCHEDULER_ENABLED` (faux par défaut : l'ancien chemin GpuPool reste actif) |
+| Visages qui parlent | la file l'accepte (`speaking_faces`) ; aucun workflow ne la pose encore |
 | Où ça tourne | **tout sur Cloudflare** (Workers, Durable Objects, D1, cron) ; l'OCI ne fait plus partie de l'architecture (tranché le 2026-09-15) |
 | Réglages à changer au déploiement | coupures Modal (`modal_app.py`, 900 s) et RunPod (`executionTimeout` 900 s côté backend) à porter à **5 h** ; le bot passe `budget_s` = 5 h − 5 min à chaque worker |
 
 ---
 
+## Où c'est, comment ça se règle, comment on le teste
+
+**Le code** (`backend/cloudflare/workers/spark-dubbing-api`) :
+
+| Fichier | Rôle |
+|---|---|
+| `src/durable-objects/GpuScheduler.js` | le bot : `/poser`, `/claim`, `/job`, `/status`, l'alarme (un tick toutes les 20 s tant qu'il y a un job ou un worker) |
+| `src/gpu-scheduler/file.js` | la file : réservation avec jeton, résultats, abandons, relances (3 au plus), remise en file |
+| `src/gpu-scheduler/workers.js` | le registre : identité figée au premier contact, ordres, inactivité |
+| `src/gpu-scheduler/prevision.js` | débits appris (inférence ÷ média, par carte), démarrages appris, temps de vidage |
+| `src/gpu-scheduler/decision.js` | les règles, pures : réveil, Modal d'abord, payant au coût par job, annuler, couper, grâce |
+| `src/gpu-scheduler/vast-offres.js` | filtre et coût complet d'une offre Vast, mémoire et liste noire des machines |
+| `src/gpu-scheduler/actions.js` | démarrer / annuler / tuer par les API, comptes (secondes, dollars, usage Modal), soldes, balai |
+| `src/gpu-scheduler/fournisseurs/*.js` | Modal (`submit`/`cancel`), RunPod (`/run`, `/cancel`, solde GraphQL), Vast (offres, louer, détruire, solde) |
+| `src/gpu-scheduler/enfant.js` | le chemin des enfants de workflow par la file (poser → attendre → clore et compter) |
+| `src/routes/gpu-claim.js` | `POST /api/internal/gpu-claim` (URL signée, limite par worker) et `/api/internal/gpu-scheduler/<status|tick|balai|arreter|degeler|poser>` |
+| `scripts/faux-worker-gpu.mjs` (backend) | un worker sans carte qui parle le protocole de prise, pour tester de bout en bout |
+
+**Les réglages** (Doppler `prd_cloudflare-workers`, lus à chaque tick, défauts entre parenthèses) :
+`SPARK_GPU_SCHEDULER_ENABLED` (false — bascule les enfants sur la file), `SPARK_GPU_SCHEDULER_PAUSE`,
+`SPARK_GPU_CLAIM_SECRET` (sinon `UPLOAD_JWT_SECRET`), `SPARK_GPU_REVEIL_S` (600),
+`SPARK_GPU_REVEIL_ANTICIPE_GPU_S` (1800), `SPARK_GPU_FILE_CIBLE_S` (300), `SPARK_GPU_FACTEUR_DEMARRAGE` (3),
+`SPARK_GPU_EXPRESS_MAX_S` (300), `SPARK_GPU_GRACE_MIN_S`/`MAX_S`/`DERNIER_S` (60/600/300), `SPARK_GPU_BUDGET_S` (17 700),
+`SPARK_GPU_MORT_S` (900), `SPARK_GPU_SOLDE_MIN_USD` (2) ; Modal : `SPARK_GPU_MODAL_ENDPOINT_URLS`, `_API_KEY`,
+`_MAX_CONCURRENT` (10), `_BUDGET_USD` (29) ; RunPod : `SPARK_GPU_RUNPOD_API_KEY`, `_PRISE_ENDPOINT_ID`
+(sinon `_ENDPOINT_ID`), `_MAX_WORKERS` (20), `_CARTES` (4), `_PRICE_PER_HOUR` (2,76) ; Vast :
+`SPARK_GPU_VAST_API_KEY`, `_IMAGE` (par empreinte), `_MAX_WORKERS` (10), `_DISK_GB` (20), `_VRAM_MIN_MB` (16 000),
+`_CUDA_MIN` (12.8), `_CPU_MIN` (4), `_INET_MIN_MBPS` (500), `_FIABILITE_MIN` (0,8) ; `SPARK_GPU_PRICES` (table existante).
+
+**Les tests** : `npm test` dans `spark-dubbing-api` (vitest) — la file (jeton, doublons, relances,
+abandons, mort), la décision (réveil, express, Modal d'abord, payant, Vast, annuler, grâce, couper,
+mort), les offres, la signature, et le **simulateur** (`tests/gpu-scheduler/simulateur.js`) qui fait
+tourner la vraie file, le vrai registre et la vraie décision contre de faux hébergeurs, bot contre
+règle naïve (une machine RunPod par 40 jobs, arrêt à 15 min) :
+
+| Scénario | Bot | Naïf |
+|---|---|---|
+| 100 portions, crédit Modal | 0 $ payé (1,16 $ de crédit), fini en 4 min | 3,66 $ |
+| 300 portions, RunPod seul (démarrage 8 min) | 1,79 $, une machine, 34 min | 9,87 $, huit machines, 12 min |
+| 300 portions, Vast (image en cache) + RunPod | 0,25 $, une machine Vast, 25 min | 9,87 $ |
+
+Le bot est toujours moins cher ; sur du payant à démarrage lent il est plus lent (une seule
+machine, la règle des 3 × démarrage) — `SPARK_GPU_FACTEUR_DEMARRAGE` règle ce curseur.
+
+**De bout en bout sans carte** : poser un job à la main (`POST /api/internal/gpu-scheduler/poser`),
+lire l'URL de prise du worker que le bot a créé dans `/status` (journal), et lancer
+`node scripts/faux-worker-gpu.mjs "<claim_url>"` : il prend, calcule, rend, obéit.
+
 ## Ce que je te demande de trancher
 
-Deux propositions à valider, écrites dans le corps du document :
-
-1. **Croisière** : Modal vide la file à zéro tant qu'il a du crédit ; une machine payante
-   ne démarre que si, à son arrivée, il lui reste `max(5 min, 3 × son démarrage facturé)` de
-   travail (« Le rythme »).
-2. **Grâce** = le prix d'un redémarrage observé, entre 1 et 10 min ; le plus cher coupé en
-   premier ; le dernier worker garde 5 min ; le sommeil n'a pas d'horloge à lui
-   (« Ce que décide le bot », Éteindre).
+Rien : les deux propositions (croisière et grâce) ont été acceptées le 2026-09-15 et
+sont écrites telles quelles. Reste à faire, dans l'ordre : mettre les clés et réglages dans
+Doppler, déployer le backend (le bot dort tant que la file est vide), tester avec le faux
+worker, déployer les images (Modal `timeout` 5 h, endpoint RunPod de prise à 5 h, image Vast
+par empreinte), puis passer `SPARK_GPU_SCHEDULER_ENABLED` à true.
 
 Tranché le 2026-09-15 : un job = 2 min d'inférence GPU réelle au plus, hors transferts ; le
 réveil démarre avant 10 min si la file est déjà grosse ; pas de plafond Vast par jour, le

@@ -186,10 +186,15 @@ def _resume(r: dict) -> dict:
     """Ce qu'on renvoie au serveur pour CHAQUE sous-job : de quoi libérer sa
     réservation et rejouer ce qui a échoué. Le résultat complet est déjà parti par le
     `callback_url` du sous-job — inutile de le renvoyer deux fois."""
+    timings = r.get("timings") if isinstance(r.get("timings"), dict) else {}
     return {
         "job_id": r.get("job_id"), "status": r.get("status"), "task": r.get("task"),
         "error": r.get("error"), "code": r.get("code"),
         "elapsed_s": r.get("elapsed_s"), "container_s": r.get("container_s"),
+        # L'ordonnanceur apprend le débit sur l'INFÉRENCE seule (hors transferts) et
+        # vérifie le dépôt : `inference_s`, `uploaded`, `bytes`, `gpu_name`, `timings`.
+        "inference_s": timings.get("inference_s"), "timings": timings,
+        "uploaded": r.get("uploaded"), "gpu_name": r.get("gpu_name"),
         "device": r.get("device"), "bytes": r.get("bytes"), "meta": r.get("meta"),
     }
 
@@ -274,6 +279,19 @@ class Battement:
                 log.info("serveur de retour après un silence")
                 self.arret = None
             self.lire_ordre(rep)
+            self.adopter_url(rep)
+
+    def adopter_url(self, rep: dict) -> None:
+        """Le serveur renouvelle l'URL de prise (`claim_url`) avant qu'elle n'expire :
+        on l'adopte pour toutes les demandes suivantes (prises et battements)."""
+        nouvelle = rep.get("claim_url")
+        if not isinstance(nouvelle, str) or nouvelle == self.url:
+            return
+        try:
+            self.url = check_url(nouvelle, "claim_url")
+            log.info("URL de prise renouvelée par le serveur")
+        except InputError as e:
+            log.warning("claim_url renouvelée ignorée : %s", e)
 
     def lire_ordre(self, rep: dict) -> None:
         """Obéit à `arret` dans N'IMPORTE QUELLE réponse du serveur — prise comme
@@ -488,7 +506,7 @@ def process_pull(inp: dict, job_id: str, progress: Progress | None = None) -> di
             if bat.arret == "net":
                 with verrou:
                     abandonnes = [s["job_id"] for s in en_vol.values()]
-                _demander(url, {**identite, **etat(), "libres": 0, "restant_s": 0, "fin": True,
+                _demander(bat.url, {**identite, **etat(), "libres": 0, "restant_s": 0, "fin": True,
                                 "resultats": a_rendre, "abandonnes": abandonnes}, essais=1)
                 a_rendre = []
                 log.warning("[%s] sortie NETTE : %d résultat(s) rendus, %d job(s) abandonné(s)",
@@ -518,7 +536,7 @@ def process_pull(inp: dict, job_id: str, progress: Progress | None = None) -> di
                     on_reprend = False
                     raison = f"budget épuisé ({restant:.0f} s restantes)"
                 else:
-                    rep = _demander(url, {**identite, **etat(), "libres": libres,
+                    rep = _demander(bat.url, {**identite, **etat(), "libres": libres,
                                           "restant_s": None if restant is None else round(restant, 1),
                                           "resultats": a_rendre})
                     if rep.get("erreur"):
@@ -534,6 +552,7 @@ def process_pull(inp: dict, job_id: str, progress: Progress | None = None) -> di
                         # L'ordre d'arrêt voyage sur CE canal aussi : c'est celui qui
                         # existe déjà et qui est le plus fréquent.
                         bat.lire_ordre(rep)
+                        bat.adopter_url(rep)
                         if bat.arret == "net":
                             continue   # tout de suite : rendre et sortir, sans attendre un job
                         jobs = [j for j in (rep.get("jobs") or []) if isinstance(j, dict)]
@@ -592,7 +611,7 @@ def process_pull(inp: dict, job_id: str, progress: Progress | None = None) -> di
     # Ce qui n'a pas pu voyager avec une demande suivante : sans ce dernier envoi, le
     # serveur garderait ces réservations jusqu'à leur expiration.
     if a_rendre or raison != "arrêt NET demandé par le serveur":
-        _demander(url, {**identite, **etat(), "libres": 0, "restant_s": 0, "fin": True,
+        _demander(bat.url, {**identite, **etat(), "libres": 0, "restant_s": 0, "fin": True,
                         "resultats": a_rendre, "raison": raison}, essais=1)
 
     log.info("[%s] PRISE terminée : %d/%d sous-job(s) en %.0f s, %d attente(s) — %s",
