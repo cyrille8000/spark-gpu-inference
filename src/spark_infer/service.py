@@ -19,7 +19,7 @@ from . import registry
 from .container_clock import CLOCK
 from .io_utils import InputError, check_url
 from .params import parse_callback, parse_heartbeat_s, parse_meta
-from .tasks import VRAM_UNE_PLACE_GB, places_du_lot, places_pour_taches, run_task
+from .tasks import places_du_lot, places_pour_taches, places_prise, run_task
 from .webhooks import Heartbeat, JobWebhooks, now_iso
 
 log = logging.getLogger("spark.service")
@@ -31,11 +31,12 @@ Progress = Callable[[dict], None]
 MAX_SOUS_JOBS = 256
 
 # ── MODE PRISE (`claim_url`) ──────────────────────────────────────────────────
-# Jobs pris PAR CARTE. Décidé par le propriétaire le 2026-09-12 : deux. La mémoire
-# en permettrait davantage (5 séparations tiennent sur une carte de 24 Go), mais
-# deux garde une marge confortable et rend la capacité lisible — quatre cartes
-# donnent huit, trois donnent six. Le serveur peut en passer un autre (`jobs_par_carte`).
-JOBS_PAR_CARTE = 2
+# Jobs pris PAR CARTE : LE WORKER DÉCIDE SEUL, d'après la mémoire de CHAQUE carte
+# (`tasks.places_prise` : moins de 24 Go → 1, 24 Go et plus → 2). Décision du
+# propriétaire, 2026-09-15 : c'est la machine qui sait ce qu'elle a, pas le serveur,
+# et la même règle vaut chez les trois hébergeurs. `jobs_par_carte` envoyé par le
+# serveur ne peut que PLAFONNER. Deux plutôt que cinq sur 24 Go (la mémoire le
+# permettrait) : marge confortable et capacité lisible.
 # LE WORKER NE SORT PLUS SUR FILE VIDE (décision du propriétaire, 2026-09-15). Avant,
 # une prise vide le faisait sortir pour ne pas payer l'attente. Désormais c'est
 # l'ORDONNANCEUR qui monte et qui descend : les hébergeurs sont réglés avec des
@@ -412,11 +413,16 @@ def process_pull(inp: dict, job_id: str, progress: Progress | None = None) -> di
         return {"status": "error", "code": "bad_input", "job_id": job_id, "error": str(e)}
 
     cartes = registry.devices()
-    par_carte = max(1, int(inp.get("jobs_par_carte") or JOBS_PAR_CARTE))
-    vram = registry.vram_total_gb()
-    if vram and vram < VRAM_UNE_PLACE_GB:
-        par_carte = 1   # carte de 16 a 22 Go : une seule place, quoi qu'en dise le serveur
-    places = par_carte * len(cartes)
+    # Chaque carte ouvre ses places d'après SA mémoire ; le serveur ne peut que plafonner.
+    par_carte = {c: places_prise(registry.vram_gb(c)) for c in cartes}
+    try:
+        plafond = int(inp.get("jobs_par_carte") or 0)
+    except (TypeError, ValueError):
+        plafond = 0
+    if plafond > 0:
+        par_carte = {c: min(n, plafond) for c, n in par_carte.items()}
+    registry.plafonner_par_carte(par_carte)
+    places = sum(par_carte.values())
     budget = _budget(inp)
     debut = time.monotonic()
     # L'identité voyage avec CHAQUE demande : c'est ce qui permet au serveur de
@@ -425,10 +431,10 @@ def process_pull(inp: dict, job_id: str, progress: Progress | None = None) -> di
     identite = {
         **identite_hebergeur(),
         "worker": job_id, "gpu_name": registry.gpu_name(), "cartes": cartes, "places": places,
-        "vram_gb": registry.vram_total_gb(),
+        "places_par_carte": par_carte, "vram_gb": registry.vram_total_gb(),
     }
     dire = progress or (lambda _p: None)
-    log.info("[%s] PRISE : %d carte(s) x %d = %d place(s) tenues pleines, budget %s, instance %s",
+    log.info("[%s] PRISE : %d carte(s), %s = %d place(s) tenues pleines, budget %s, instance %s",
              job_id, len(cartes), par_carte, places,
              "aucun" if budget is None else f"{budget:.0f} s", identite.get("instance_id"))
 

@@ -120,6 +120,17 @@ PLAFOND_DEFAUT = 32
 # torch les rapporte (total_memory / 1e9) : une carte « 24 Go » en annonce 23,6 a 25,4
 # (L4 23,66, 3090 25,3), une « 16 Go » 17,2, une « 20 Go » 21,5.
 VRAM_UNE_PLACE_GB = 23.0
+# En PRISE, le worker decide seul ses places d'apres CHAQUE carte (decision du proprietaire,
+# 2026-09-15 : pas de consigne par defaut du serveur, pas de version par hebergeur) :
+# moins de 24 Go → 1 job par carte, 24 Go et plus → 2. Le serveur ne peut que plafonner.
+PLACES_PRISE_24GO = 2
+
+
+def places_prise(vram_gb: float | None) -> int:
+    """Places qu'UNE carte ouvre en prise, d'apres sa memoire. Pur."""
+    if not vram_gb or vram_gb < VRAM_UNE_PLACE_GB:
+        return 1
+    return PLACES_PRISE_24GO
 
 
 def jobs_pour_vram(modele: str, vram_gb: float | None, force: str | None = None,

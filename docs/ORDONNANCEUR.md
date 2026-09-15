@@ -56,7 +56,9 @@ couper un worker coûte au pire un job.
 
 ## Ce que fait un worker, et rien d'autre
 
-- Il compte ses cartes et ouvre deux places par carte. Il les garde pleines.
+- Il compte ses cartes et lit la mémoire de chacune : **moins de 24 Go, une place ; 24 Go
+  et plus, deux**. C'est lui qui décide, pas le serveur, et la règle est la même chez les
+  trois hébergeurs. Il garde ses places pleines.
 - Il **ne sort jamais de lui-même**. File vide : il attend `attente_s` et redemande.
 - Il obéit à `arret` : `doux` = finir ce qui tourne puis sortir ; `net` = rendre ce
   qui est fini, déclarer ce qu'il abandonne, sortir tout de suite.

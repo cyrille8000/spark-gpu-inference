@@ -65,6 +65,10 @@ _pools: dict[tuple[str, str], _Pool] = {}
 # ne le montrait pas.
 _courant = threading.local()
 _cartes_cache: list[str] | None = None
+# Plafond d'instances PAR CARTE, pose par celui qui connait les cartes (la prise, d'apres
+# la memoire de chacune). Il prime sur la repartition uniforme de `_par_carte` : une
+# machine a une carte de 16 Go et une de 24 ne doit jamais empiler deux jobs sur la petite.
+_plafonds: dict[str, int] = {}
 
 
 def devices() -> list[str]:
@@ -110,12 +114,29 @@ def _index(carte: str | None = None) -> int | None:
 
 
 def _pool(cle: tuple[str, str], max_instances: int) -> _Pool:
+    m = max(1, int(max_instances))
+    plafond = _plafonds.get(cle[1])
+    if plafond:
+        m = min(m, plafond)
     p = _pools.get(cle)
     if p is None:
-        p = _pools[cle] = _Pool(max_size=max(1, int(max_instances)))
+        p = _pools[cle] = _Pool(max_size=m)
     else:
-        p.max_size = max(1, int(max_instances))
+        p.max_size = m
     return p
+
+
+def plafonner_par_carte(plafonds: dict[str, int]) -> None:
+    """Nombre maximal d'instances par carte. Pose par la prise d'apres la memoire de
+    chaque carte ; vide = repartition uniforme."""
+    with _cond:
+        _plafonds.clear()
+        _plafonds.update({c: max(1, int(n)) for c, n in plafonds.items()})
+        for cle, p in _pools.items():
+            pl = _plafonds.get(cle[1])
+            if pl:
+                p.max_size = min(p.max_size, pl)
+        _cond.notify_all()
 
 
 def _par_carte(max_total: int) -> int:
@@ -284,6 +305,7 @@ def reset() -> None:
     global _cartes_cache
     with _cond:
         _pools.clear()
+        _plafonds.clear()
         _cond.notify_all()
     _cartes_cache = None
     _courant.carte = None
@@ -296,6 +318,18 @@ def vram_total_gb() -> float | None:
     try:
         import torch
         i = _index()
+        if i is None or not torch.cuda.is_available():
+            return None
+        return torch.cuda.get_device_properties(i).total_memory / 1e9
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def vram_gb(carte: str) -> float | None:
+    """Memoire d'UNE carte donnee (Go, total_memory / 1e9), None sur processeur."""
+    try:
+        import torch
+        i = _index(carte)
         if i is None or not torch.cuda.is_available():
             return None
         return torch.cuda.get_device_properties(i).total_memory / 1e9

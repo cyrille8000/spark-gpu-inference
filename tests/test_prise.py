@@ -99,6 +99,7 @@ class Sortie(Exception):
 def _prepare(monkeypatch, serveur, cartes, duree=0.0, durees_par_job=None):
     monkeypatch.setattr(service, "_demander", serveur)
     monkeypatch.setattr(tasks.registry, "vram_total_gb", lambda: 24.0)
+    monkeypatch.setattr(registry, "vram_gb", lambda c: 24.0)
     # `vast_worker.py` pose SPARK_PROVIDER=vastai a l'import, et pytest importe TOUS les
     # modules de test avant de les executer : sans ceci, l'homme-mort « se tait au lieu de
     # se tuer » de Vast s'appliquerait ici et un test d'arret ne finirait jamais.
@@ -135,12 +136,25 @@ def test_la_capacite_suit_les_cartes_trouvees(monkeypatch):
         assert srv.demandes[0]["cartes"] == cartes
 
 
-def test_une_carte_de_16_go_n_ouvre_qu_une_place_en_prise(monkeypatch):
+def test_le_worker_decide_ses_places_d_apres_chaque_carte(monkeypatch):
+    """Moins de 24 Go : une place ; 24 Go et plus : deux. Decide par le worker, carte par
+    carte, sans consigne du serveur — et une machine melangee compte juste."""
     srv = FauxServeur(0)
     _prepare(monkeypatch, srv, ["cuda:0", "cuda:1"])
-    monkeypatch.setattr(tasks.registry, "vram_total_gb", lambda: 17.2)
-    out = service.process_pull({"claim_url": "https://serveur/prise?sig=x", "jobs_par_carte": 2}, "w1c")
+    monkeypatch.setattr(registry, "vram_gb", lambda c: 17.2)
+    out = service.process_pull({"claim_url": "https://serveur/prise?sig=x"}, "w1c")
     assert out["places"] == 2, "deux cartes de 16 Go = deux places, pas quatre"
+    assert srv.demandes[0]["places_par_carte"] == {"cuda:0": 1, "cuda:1": 1}
+    srv = FauxServeur(0)
+    _prepare(monkeypatch, srv, ["cuda:0", "cuda:1"])
+    monkeypatch.setattr(registry, "vram_gb", lambda c: {"cuda:0": 17.2, "cuda:1": 25.3}[c])
+    out = service.process_pull({"claim_url": "https://serveur/prise?sig=x"}, "w1d")
+    assert out["places"] == 3 and srv.demandes[0]["places_par_carte"] == {"cuda:0": 1, "cuda:1": 2}
+    # Le serveur ne peut que plafonner, jamais relever.
+    srv = FauxServeur(0)
+    _prepare(monkeypatch, srv, ["cuda:0"])
+    assert service.process_pull({"claim_url": "https://serveur/prise?sig=x", "jobs_par_carte": 1}, "w1e")["places"] == 1
+    assert service.process_pull({"claim_url": "https://serveur/prise?sig=x", "jobs_par_carte": 5}, "w1f")["places"] == 2
 
 
 def test_l_identite_voyage_avec_chaque_demande(monkeypatch):

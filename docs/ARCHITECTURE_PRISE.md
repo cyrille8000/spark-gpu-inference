@@ -57,8 +57,9 @@ autorisation, le worker n'a aucun secret à connaître.
  "budget_s": 17400, "jobs_par_carte": 2, "battement_s": 30}
 ```
 
-Le worker compte ses cartes, ouvre **deux places par carte** — quatre cartes font huit,
-trois font six — et les tient **pleines** :
+Le worker compte ses cartes et lit la mémoire de chacune — **une place sous 24 Go, deux à
+partir de 24 Go** (2026-09-15 : décidé par lui, `tasks.places_prise`, même règle chez les trois
+hébergeurs ; `jobs_par_carte` du serveur ne peut que plafonner) — et les tient **pleines** :
 
 ```
 → {"worker":"…", "cartes":["cuda:0","cuda:1","cuda:2"], "places":6,

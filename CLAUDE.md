@@ -42,8 +42,9 @@ Détails du contrat : [README.md](README.md).
 - **Vast.ai : image À PART, cœur COMMUN** (2026-09-12). `Dockerfile.vast` part de l'image de production et
   n'ajoute que `src` (le cœur à jour) et `vast_worker.py` ; Modal et RunPod gardent leur image, inchangée tant
   qu'on ne la rebâtit pas. NE PAS toucher à `modal_app.py` ni `handler.py` : ils marchent, c'est la consigne.
-- **LE WORKER VA CHERCHER SON TRAVAIL** (`claim_url`, 2026-09-12) — il compte ses cartes, tient 2 places
-  par carte TOUJOURS PLEINES, et redemande dès qu'une se libère. Rien à régler chez l'hébergeur : ni
+- **LE WORKER VA CHERCHER SON TRAVAIL** (`claim_url`, 2026-09-12) — il compte ses cartes, ouvre ses places
+  d'après la mémoire de CHACUNE (`tasks.places_prise` : < 24 Go → 1, ≥ 24 Go → 2 ; décidé par lui, 2026-09-15 ;
+  `jobs_par_carte` du serveur ne peut que plafonner), les tient TOUJOURS PLEINES, et redemande dès qu'une se libère. Rien à régler chez l'hébergeur : ni
   `concurrency_modifier`, ni `@modal.concurrent`, ni variable d'environnement. Le battement va vers
   NOTRE serveur, donc sa réponse porte l'ordre d'arrêt (`{"arret":"doux"|"net"}`) — extinction à distance
   sur les trois plateformes avec le même code. Détail : [docs/ARCHITECTURE_PRISE.md](docs/ARCHITECTURE_PRISE.md).

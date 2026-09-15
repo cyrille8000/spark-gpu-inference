@@ -171,8 +171,7 @@ On ne lui passe qu'une chose au lancement, une URL **signée** — elle porte so
 autorisation, le worker n'a aucun secret à connaître :
 
 ```json
-{"claim_url": "https://api.dubbingspark.com/api/internal/gpu-claim?sig=…",
- "budget_s": 420, "jobs_par_carte": 2}
+{"claim_url": "https://api.dubbingspark.com/api/internal/gpu-claim?sig=…"}
 ```
 
 Il demande, exécute, et renvoie ses résultats AVEC la demande suivante :

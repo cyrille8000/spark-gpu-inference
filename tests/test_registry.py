@@ -172,3 +172,14 @@ def test_la_carte_du_job_reste_lisible_apres_le_bail():
     finally:
         registry.reset()
 
+
+def test_le_plafond_par_carte_prime_sur_la_repartition_uniforme():
+    """Une machine a une carte de 16 Go et une de 24 : trois places au total, mais jamais
+    deux instances sur la petite carte, quoi que dise la repartition uniforme (ceil(3/2) = 2)."""
+    registry._cartes_cache = ["cuda:0", "cuda:1"]
+    registry.plafonner_par_carte({"cuda:0": 1, "cuda:1": 2})
+    tenues = []
+    with registry.lease("m", _obj, 3), registry.lease("m", _obj, 3), registry.lease("m", _obj, 3):
+        etat = registry.pool_state()["m"]["cartes"]
+        tenues = [(c, e["busy"]) for c, e in sorted(etat.items())]
+    assert tenues == [("cuda:0", 1), ("cuda:1", 2)], tenues
