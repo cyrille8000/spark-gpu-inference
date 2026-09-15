@@ -63,8 +63,9 @@ Détails du contrat : [README.md](README.md).
   le moment — leur propre contrôle de démarrage le dit. C'est LA raison du mode prise : le serveur ne peut
   pas deviner, le worker sait.
 - **On paie TOUT le démarrage chez RunPod** (vérifié sur leur facture, `GET /v1/billing/endpoints`) :
-  1 121,5 s facturées pour 464 s exécutées, ×2,42, et l'écart égale la somme des `delayTime`. Chez Vast le
-  tirage d'image est gratuit mais le stockage court tant que l'instance existe. Chez Modal, non documenté.
+  1 121,5 s facturées pour 464 s exécutées, ×2,42, et l'écart égale la somme des `delayTime`. **Chez Vast et
+  Modal aussi** (établi le 2026-09-15) : on paie dès le démarrage, tirage de l'image compris ; chez Vast, la
+  bande passante du tirage et le stockage en plus. L'ordonnanceur compte donc chaque worker depuis sa DEMANDE.
   Ne JAMAIS facturer le démarrage à l'utilisateur : deux jobs identiques auraient 8 min d'écart selon le
   hasard de l'ordonnancement. C'est un coût de plateforme.
 - **Le nombre de jobs se DÉDUIT de la carte et de la tâche** (`tasks.jobs_pour_vram`), activé par
@@ -127,7 +128,8 @@ Détails du contrat : [README.md](README.md).
   `requirements.txt`. `pip check` du Dockerfile bloque tout autre conflit.
 
 - **Temps conteneur rapporté, jamais estimé.** `container_s` (container_clock.py) = fenêtre depuis le rapport
-  précédent ou le démarrage du processus : c'est ce que Modal/RunPod facturent, pas `elapsed_s`. La plateforme facture
+  précédent ou le démarrage du processus, pas `elapsed_s` — mais le tirage et le démarrage du conteneur AVANT
+  le processus sont facturés aussi et n'y sont pas. La plateforme facture
   `container_s`. `scaledown_window` Modal = 10 s pour que la queue d'inactivité non comptée reste courte (2026-09-09).
 - **Un seul traitement, deux hébergeurs.** `spark_infer/service.py::process_job` est appelé par `handler.py` (RunPod)
   et `modal_app.py` (Modal, même image GHCR via `Image.from_registry`, secret `modal-api-key`). Ne rien dupliquer.

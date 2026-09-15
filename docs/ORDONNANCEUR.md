@@ -151,7 +151,8 @@ Trois décisions, une seule règle : **des dollars contre des dollars**.
 **Allumer.** Quand la file ne se videra pas assez vite avec ce qui tourne, il ajoute
 des workers, autant qu'il en faut, chez le moins cher qui a de la place. Une machine
 en cours de démarrage compte déjà, avec son heure d'arrivée prévue. Si la file se
-vide avant qu'elle arrive, il l'annule tant que c'est gratuit.
+vide avant qu'elle arrive, il l'annule : le démarrage déjà facturé est perdu, le reste ne
+l'est pas.
 
 **Éteindre.** Un worker inactif coûte, à la seconde près, chez les trois. Sur Vast c'est
 la machine entière, toutes ses cartes, tant que le pod existe. Sur Vast, éteindre = détruire
@@ -187,9 +188,14 @@ on coupe. Un job coupé une fois ne l'est plus jamais.
 |---|---|---|---|
 | Prix | **0 tant qu'il reste du crédit** (6 comptes × 30 $/mois, renouvelé), dépensé dès qu'il y a du travail, sans réserve (tranché) | réel, à la seconde | prix de l'offre, à la seconde, machine entière |
 | Capacité | 10 cartes par compte, 1 carte par worker | 20 workers × 4 cartes | sans plafond ; machines de 1 à 12 cartes et plus, **aucune taille exclue** |
-| Démarrage | ~1 min | 20-30 s à chaud, jusqu'à 8 min à froid, **facturé** | 20 s si l'image est en cache, sinon minutes ; tirage gratuit |
+| Démarrage | ~1 min, **facturé** (sur le crédit) | 20-30 s à chaud, jusqu'à 8 min à froid, **facturé** | 20 s si l'image est en cache, sinon minutes, **facturé** ; bande passante du tirage en plus |
 | Éteindre | `cancel` | `cancel` ; sinon idle timeout | `destroy` par l'API |
 | Ce que le bot surveille | crédit restant du mois | **solde lu par l'API**, temps de démarrage observés | **solde lu par l'API**, machines connues avec l'image en cache |
+
+**Chez les trois, on paie dès la demande** (établi le 2026-09-15) : le démarrage et le tirage
+de l'image comptent. Le bot compte chaque worker depuis sa demande, et prévoit le démarrage
+OBSERVÉ de chaque classe (Modal, RunPod chaud ou froid, Vast cache ou froid), le défaut de la
+config seulement tant qu'il n'a rien vu.
 
 Conséquence : Modal est le plancher gratuit, toujours rempli en premier. RunPod et
 Vast ne servent que les pics et les longues charges. Sur Vast, le bot ne se limite à
@@ -230,7 +236,8 @@ machines qui ont refusé l'image ou rendu un résultat invalide vont en liste no
   machines), sinon celui de sa classe de carte, corrigé par le CPU et le réseau ;
 - les octets viennent des jobs du lot (13 Mo par séparation, 6 par voix, plus pour les
   visages) ;
-- le tirage de l'image n'est pas facturé en temps ; sa bande passante, à vérifier.
+- le tirage de l'image se paie deux fois : en temps (la machine est facturée dès la location,
+  démarrage compris) et en bande passante entrante (`taille de l'image × prix entrée`).
 
 **Dans l'ordre** : l'appel à l'API part avec les filtres ci-dessus et rend la liste **triée par
 prix**, le moins cher en premier. Le bot garde les meilleures offres **de chaque taille** (1, 2,
@@ -428,8 +435,8 @@ règle naïve (une machine RunPod par 40 jobs, arrêt à 15 min) :
 
 | Scénario | Bot | Naïf |
 |---|---|---|
-| 100 portions, crédit Modal | 0 $ payé (1,16 $ de crédit), fini en 4 min | 3,66 $ |
-| 300 portions, RunPod seul (démarrage 8 min) | 1,79 $, une machine, 34 min | 9,87 $, huit machines, 12 min |
+| 100 portions, crédit Modal | 0 $ payé (1,63 $ de crédit, dont 0,27 $ pour démarrer 20 conteneurs), attente max 7 min | 4,03 $ |
+| 300 portions, RunPod seul (démarrage 8 min) | 2,71 $, deux machines, attente max 30 min | 11,01 $, attente max 15 min |
 | 300 portions, Vast (image en cache) + RunPod | 0,25 $, une machine Vast, 25 min | 9,87 $ |
 
 Le bot est toujours moins cher ; sur du payant à démarrage lent il est plus lent (une seule
