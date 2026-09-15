@@ -81,3 +81,25 @@ def test_etat_suit_les_jobs_et_l_inactivite():
     e.fin()
     assert (e.actifs, e.faits) == (0, 2)
     assert e.inactif_depuis() >= 0.0
+
+
+def test_les_dockerfiles_sont_lisibles_par_docker():
+    """Aucun caractère de contrôle, et chaque ligne continuée d'un ENV est `NOM=valeur` ou un
+    commentaire : un remplacement de texte raté y avait laissé un \x01, et le build Vast est
+    tombé en « can't find = » (2026-09-15)."""
+    import re
+    racine = Path(__file__).resolve().parents[1]
+    for nom in ("Dockerfile", "Dockerfile.vast"):
+        texte = (racine / nom).read_text(encoding="utf-8")
+        assert not re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", texte), f"caractère de contrôle dans {nom}"
+        dans_env = False
+        for ligne in texte.splitlines():
+            brut = ligne.strip()
+            if brut.startswith("ENV "):
+                dans_env = brut.endswith("\\")
+                continue
+            if dans_env:
+                if brut.startswith("#") or brut == "":
+                    continue
+                assert re.match(r"^[A-Za-z_][A-Za-z0-9_]*=\S*(\s+\x5c)?$", brut), f"{nom} : ligne ENV invalide « {brut} »"
+                dans_env = brut.endswith("\\")
