@@ -120,6 +120,49 @@ dépend décidément pas de la carte.
 (`GPU binary test passed: N GPU(s) healthy`). C'est ce qui a motivé le mode prise :
 le serveur ne peut pas deviner ce que l'hébergeur a livré.
 
+### Cartes de 48 Go — mesuré le 2026-09-15
+
+Question du propriétaire : sur une carte de 48 Go, faire tourner des jobs en parallèle
+est-il rentable ? Séparation seule, WAV de production de 150 s, échauffement jeté, vagues
+de 1 à 8 jobs simultanés, machines à réseau rapide et processeur large (80 et 96 cœurs).
+
+| Carte | Génération | Prix | Job seul | 2 jobs | 4 jobs | 6 jobs | 8 jobs | Mémoire à 8 |
+|---|---|---|---|---|---|---|---|---|
+| Quadro RTX 8000 | Turing (7.5) | 0,282 $/h | 31,4 s — 1,91/min | ×1,12 | ×1,19 | ×1,21 | ×1,21 | 33,9 Go |
+| RTX PRO 5000 Blackwell | Blackwell (12.0) | 0,789 $/h | 15,7 s — 3,82/min | ×1,12 | ×1,20 | ×1,23 | ×1,23 | 35,2 Go |
+
+**Le gain plafonne à ×1,2 dès 6 jobs, sur les deux générations.** À 8 jobs, chacun attend
+99 s sur la Blackwell au lieu de 15,7 s, pour le même débit qu'à 6. La mémoire se remplit
+(35 Go) sans rien rapporter.
+
+Le temps de chaque étape, lu dans l'image (RTX PRO 5000) :
+
+| Jobs simultanés | Téléchargement | Décodage | Inférence | Encodage |
+|---|---|---|---|---|
+| 1 | 0,2 s | 0,3 s | 12,8 s | 0,4 s |
+| 2 | 0,2 s | 0,3 s | 21,6 s | 0,3 s |
+| 4 | 0,3 s | 0,3 s | 42,4 s | 0,4 s |
+| 6 | 0,5 s | 0,3 s | 66,2 s | 0,4 s |
+| 8 | 0,5 s | 0,4 s | 91,4 s | 0,4 s |
+
+C'est **l'inférence** qui s'allonge, presque en proportion du nombre de jobs : la carte
+partage son calcul, elle ne calcule pas plus. Les transferts ne pèsent rien.
+
+**Coût par job**, pod plein au meilleur débit : 0,0020 $ sur la RTX 8000, 0,0028 $ sur la
+Blackwell. La carte la plus ancienne est la moins chère par job ; la Blackwell va deux fois
+plus vite par job. Ce qui compte pour choisir est donc le **débit par dollar de la carte**,
+pas sa mémoire : une carte de 48 Go ne vaut pas plus de places qu'une de 24 Go
+(`tasks.places_prise` : 2 par carte à partir de 24 Go), et l'ordonnanceur la classe à son
+prix et à son débit appris.
+
+**Incidents de la série, qui ont servi.** La RTX 6000 Ada (Ada, 8.9) a été refusée deux fois
+par le worker Vast : il exigeait le numéro de capacité exact dans la liste compilée, où 8.9
+ne figure pas. Corrigé (`d88ea82`) : capacité ≥ minimum des roues, comme le filtre de
+l'ordonnanceur ; il faut reconstruire l'image Vast pour en profiter. Une RTX A6000 est restée
+bloquée au chargement, Docker de l'hôte cassé (« unknown flag: --runtime ») : l'ordonnanceur
+compte désormais ces machines comme des échecs, liste noire au troisième (`35c47152`).
+Coût total de la série : 0,34 $.
+
 ### Gain de débit
 
 | Situation | Gain |
@@ -336,7 +379,8 @@ Sans ça, un conteneur à trois jobs se ferait facturer trois fois son temps.
 
 ### Mesures manquantes
 
-La batterie n'est pas complète. Manquent : 32, 48, 64, 140 et 179 Go ; la
+La batterie n'est pas complète. Manquent : 32, 64, 140 et 179 Go, et en 48 Go l'Ampere
+(A6000) et l'Ada (RTX 6000 Ada, qui demande l'image Vast reconstruite) ; la
 conversion vocale sur plusieurs tailles ; les machines à plus de deux cartes.
 Coût estimé pour compléter : 6 à 8 $ de location. Crédit restant : 3,75 $.
 
