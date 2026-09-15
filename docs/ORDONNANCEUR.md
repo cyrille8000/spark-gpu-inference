@@ -89,10 +89,12 @@ Ce que ça donne :
   Vast seulement si 10 min d'attente, facturées à la seconde, coûtent moins qu'un
   redémarrage ;
 - un job posé pendant un lot attend le tick suivant ;
-- **sauf la voie express** : un projet dont le média total fait moins de 5 minutes (seuil
-  Doppler) n'attend pas le tick. Ses jobs sont prenables tout de suite et servis AVANT ceux
-  du lot ; un worker chaud les pioche dans la seconde, sinon le bot en démarre un aussitôt,
-  chez Modal en priorité. Le critère est la durée du projet, pas celle des jobs découpés.
+- **sauf la voie express, sur Modal seulement** : un projet dont le média total fait
+  moins de 5 minutes (seuil Doppler) n'attend pas le tick. Ses jobs sont prenables tout de
+  suite et servis AVANT ceux du lot ; un worker Modal chaud les pioche dans la seconde,
+  sinon le bot en démarre un aussitôt. Le critère est la durée du projet, pas celle des
+  jobs découpés. **Crédit Modal épuisé : plus d'express**, ces projets rejoignent le lot
+  des 10 minutes comme les autres — on ne paie jamais RunPod ni Vast pour aller vite.
 
 ---
 
