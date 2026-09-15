@@ -159,17 +159,44 @@ suivante. Rien n'est une constante.
 
 ## Sécurité : des machines qui ne sont pas à nous
 
-- Le worker ne reçoit **aucun secret** : une URL de prise signée, à durée limitée, liée
-  à son identité. Volée, elle ne donne que ses jobs, et le bot la révoque.
-- Les médias arrivent par tickets par job, courte durée : lecture de l'entrée, PUT de
-  la sortie. Pas de clé R2, Doppler ni hébergeur dans l'image.
-- Sur Vast en prise : aucun port ouvert, rien n'entre. L'image est louée par empreinte
-  (`@sha256`), un hôte ne peut pas la remplacer.
-- Ce qui revient est contrôlé : taille annoncée, en-tête, sha256, durée plausible.
-- **Limite qu'aucun code ne lève** : sur Vast, l'opérateur de la machine peut lire ce
-  que le conteneur traite (l'audio et la vidéo de l'utilisateur) et pourrait rendre un
-  résultat corrompu. Modal et RunPod sont des datacenters ; Vast, un particulier ou une
-  petite société. Voir la question 6.
+Principe : **une machine louée est un inconnu**. Elle ne reçoit que ce qu'il faut pour
+son travail, jamais de quoi en faire un autre, et tout ce qu'elle rend est vérifié.
+
+**Ce que le worker reçoit**
+
+| Ce qu'il a | Ce que ça permet | Ce que ça ne permet pas |
+|---|---|---|
+| une URL de prise signée (HMAC), liée à SON identité, valable quelques heures, renouvelée par le serveur à chaque réponse | demander ses jobs, rendre ses résultats | prendre les jobs d'un autre worker, parler à autre chose que la route de prise |
+| par job, un ticket de lecture du média et un PUT présigné de sortie, courte durée | lire cette entrée, écrire cette sortie | lire le reste du projet, lister R2, écraser autre chose |
+| rien d'autre | | pas de clé R2, Doppler, Modal, RunPod, Vast, Discord dans l'image |
+
+**Ce que le serveur exige**
+
+- Signature vérifiée sur chaque demande ; identité du worker (instance, image) figée à
+  la première prise, une divergence coupe le worker.
+- Un résultat n'est accepté que du worker qui tient la réservation, une seule fois
+  (jeton de réservation : pas de rejeu, pas de résultat en retard d'un worker mort).
+- Limite de requêtes par worker ; une URL révocable par identifiant à tout moment.
+- Ce qui revient est contrôlé avant d'être utilisé : taille annoncée, en-tête WAV ou
+  JSON, sha256, durée plausible par rapport au média d'entrée.
+
+**Ce que la machine ne peut pas faire**
+
+- Rien n'entre : sur Vast en prise, aucun port ouvert, aucun jeton de worker ; le pod ne
+  fait que sortir vers notre API. Sur Modal et RunPod, pareil.
+- L'image est désignée par empreinte (`@sha256`) : un hôte ne peut pas en substituer une.
+  L'image est publique et ne contient aucun secret : la lire n'apprend rien.
+- Les clés des hébergeurs ne vivent que dans le bot (Doppler), avec un plafond de
+  dépense par jour et un journal de chaque démarrage, arrêt et location.
+
+**Choix des machines Vast** : `verified` et fiabilité ≥ 0,97 seulement, liste noire des
+machines qui ont refusé l'image ou rendu un résultat invalide.
+
+**Limite qu'aucun code ne lève** : sur Vast, l'opérateur de la machine peut lire ce que
+le conteneur traite (l'audio et la vidéo de l'utilisateur) et pourrait rendre un
+résultat corrompu — le contrôle de plausibilité attrape le grossier, pas le subtil.
+Modal et RunPod sont des datacenters ; Vast, un particulier ou une petite société.
+Voir la question 6.
 
 ---
 
