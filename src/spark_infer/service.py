@@ -32,8 +32,8 @@ MAX_SOUS_JOBS = 256
 
 # ── MODE PRISE (`claim_url`) ──────────────────────────────────────────────────
 # Jobs pris PAR CARTE : LE WORKER DÉCIDE SEUL, d'après la mémoire de CHAQUE carte
-# (`tasks.places_prise` : PROPORTIONNEL à la mémoire, sur la tâche la plus gourmande —
-# 16 Go → 3, 24 Go → 5, 48 Go → 10, 102 Go → 22). Décisions du propriétaire du
+# (`tasks.places_prise` : la table du propriétaire — 16 Go → 2, 24 Go → 3, 48 Go → 8,
+# 80 Go → 16, 102 Go → 20, interpolée entre deux). Décisions du propriétaire du
 # 2026-09-15 : c'est la machine qui sait ce qu'elle a, la même règle vaut chez les trois
 # hébergeurs, et le travail étant asynchrone on remplit la carte plutôt que de chercher
 # la vitesse d'un job. `jobs_par_carte` envoyé par le serveur ne peut que PLAFONNER.

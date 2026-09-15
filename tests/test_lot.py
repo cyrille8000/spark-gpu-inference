@@ -90,12 +90,17 @@ def test_places_calculees_sur_la_tache_la_plus_gourmande(monkeypatch):
 
 
 def test_les_places_de_prise_suivent_la_memoire_de_la_carte():
-    """Decision du 2026-09-15 : proportionnel a la memoire, de 16 Go a plus de 100 Go, sur
-    la tache la plus gourmande (la separation). Plus de regle « 1 sous 24 Go, 2 au-dessus »."""
-    # Go tels que torch les rapporte : « 16 Go » 17,2 ; L4 23,66 ; 3090 25,3 ; « 48 Go » 50,8 ; A100 85,1 ; PRO 6000 102
-    attendu = {17.2: 3, 23.66: 5, 25.3: 5, 50.8: 10, 85.1: 18, 102.0: 22}
+    """Decision du 2026-09-15 : la table du proprietaire — 16 Go → 2, 24 Go → 3, 48 Go → 8,
+    80 Go → 16, 102 Go → 20 — sur la memoire telle que la carte la rapporte."""
+    # torch : A4000 16,87 ; « 16 Go » 17,2 ; L4 23,66 ; 3090 25,3 ; L40S 47,7 ; « 48 Go » 50,8 ; A100 80 85,1 ; PRO 6000 102
+    attendu = {16.87: 2, 17.2: 2, 23.66: 3, 25.3: 3, 47.7: 8, 50.8: 8, 85.1: 16, 102.0: 20}
     for vram, n in attendu.items():
         assert tasks.places_prise(vram) == n, (vram, tasks.places_prise(vram))
+    # entre deux points : interpole, arrondi en dessous
+    assert tasks.places_prise(21.5) == 2     # « 20 Go »
+    assert tasks.places_prise(31.8) == 4     # RTX 5090 32 Go
+    assert tasks.places_prise(42.4) == 7     # A100 40 Go
+    assert tasks.places_prise(150.6) == 32   # H200 141 Go : meme pente, plafond
     # la separation borne : une conversion vocale seule en tiendrait davantage
     assert tasks.jobs_pour_vram("chatterbox_vc", 17.2) == 6
     assert tasks.jobs_pour_vram("bs_roformer_leap_xe", 17.2) == 3

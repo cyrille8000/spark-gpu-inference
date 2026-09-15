@@ -116,24 +116,43 @@ MARGE = 0.85
 # baisser le plafond par `SPARK_JOBS_MAX`, pas à la table de le faire pour tout le monde.
 PLAFOND_DEFAUT = 32
 
+# PLACES EN PRISE : la table du proprietaire (2026-09-15) — 16 Go → 2, 24 Go → 3,
+# 48 Go → 8, 80 Go → 16, 102 Go → 20. Proportionnel a la carte, sans etre extreme : la
+# memoire en permettrait davantage (5 separations sur 24 Go), on garde de la marge.
+# Les points sont en Go TELS QUE LA CARTE LES RAPPORTE (torch : total_memory / 1e9 ; Vast :
+# Mio × 1,048576 / 1000), qui depassent le nominal : une « 16 Go » annonce 16,7 a 17,2,
+# une « 24 Go » 23,7 (L4) a 25,8 (4090), une « 48 Go » 47,7 (L40S) a 51,5, une « 80 Go »
+# 85,1, une « 96 Go » 102. Entre deux points : interpole, arrondi a l'entier inferieur
+# (40 Go → 7, 32 Go → 4) ; au-dela du dernier : meme pente, jusqu'au plafond de 32.
+POINTS_PLACES = ((16.0, 2), (23.5, 3), (47.0, 8), (84.0, 16), (100.0, 20))
+
+
+def _places_table(vram_gb: float) -> int:
+    pts = POINTS_PLACES
+    if vram_gb <= pts[0][0]:
+        (g1, p1), (g2, p2) = pts[0], pts[1]
+    elif vram_gb >= pts[-1][0]:
+        (g1, p1), (g2, p2) = pts[-2], pts[-1]
+    else:
+        i = next(k for k in range(1, len(pts)) if vram_gb <= pts[k][0])
+        (g1, p1), (g2, p2) = pts[i - 1], pts[i]
+    return int(p1 + (p2 - p1) * (vram_gb - g1) / (g2 - g1))
+
 
 def places_prise(vram_gb: float | None) -> int:
-    """Places qu'UNE carte ouvre en PRISE : PROPORTIONNELLES A SA MEMOIRE (decision du
-    proprietaire, 2026-09-15), de 16 Go a plus de 100 Go, sans plafond arbitraire.
-
-    Le travail arrive de maniere asynchrone : on ne cherche pas la vitesse d'un job, on
-    cherche le cout par job. Une carte tient donc autant de jobs que sa memoire le permet,
-    calcule sur la tache la PLUS GOURMANDE (le worker ne sait pas d'avance ce que la file
-    lui donnera) — aujourd'hui la separation : 16 Go → 3, 24 Go → 5, 48 Go → 10,
-    80 Go → 18, 102 Go → 22.
+    """Places qu'UNE carte ouvre en PRISE, d'apres sa memoire : la table du proprietaire
+    (`POINTS_PLACES`), jamais plus que ce que la memoire permet sur la tache la plus
+    gourmande (`jobs_pour_vram`), jamais moins d'une.
 
     Ce qu'il faut garder en tete (mesure du 2026-09-15, cartes de 48 Go) : au-dela de ~6
-    jobs sur UNE carte le debit ne monte plus (×1,23), chaque job s'allonge. Les places en
-    plus achetent de la CAPACITE D'ACCUEIL, pas de la vitesse — c'est l'ordonnanceur qui en
-    tient compte dans son calcul de debit. Remplace l'ancienne regle (1 place sous 24 Go,
-    2 au-dessus). Le serveur peut toujours plafonner (`jobs_par_carte`). Pur.
+    jobs sur UNE carte le debit ne monte plus (×1,23), chaque job s'allonge. Les places
+    achetent de la CAPACITE D'ACCUEIL, pas de la vitesse — l'ordonnanceur compte le debit
+    avec la courbe mesuree. Le serveur peut toujours plafonner (`jobs_par_carte`). Pur.
     """
-    return min(jobs_pour_vram(m, vram_gb) for m in MODELE_DE_TACHE.values())
+    if not vram_gb or vram_gb <= 0:
+        return 1
+    memoire = min(jobs_pour_vram(m, vram_gb) for m in MODELE_DE_TACHE.values())
+    return max(1, min(PLAFOND_DEFAUT, memoire, _places_table(float(vram_gb))))
 
 
 def jobs_pour_vram(modele: str, vram_gb: float | None, force: str | None = None,

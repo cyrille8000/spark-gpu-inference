@@ -59,11 +59,16 @@ chaque job son temps d'inférence à part : c'est lui qui nourrit le débit par 
 ## Ce que fait un worker, et rien d'autre
 
 - Il compte ses cartes et lit la mémoire de chacune : **ses places suivent sa mémoire**,
-  calculées sur la tâche la plus gourmande (la séparation) — 16 Go → 3, 24 Go → 5,
-  48 Go → 10, 80 Go → 18, 102 Go → 22 (tranché le 2026-09-15 : le travail est asynchrone,
-  on remplit la carte plutôt que de chercher la vitesse d'un job). C'est lui qui décide,
-  pas le serveur, et la règle est la même chez les trois hébergeurs. Il garde ses places
-  pleines.
+  selon la table du propriétaire (tranchée le 2026-09-15 : le travail est asynchrone, on
+  remplit la carte sans être extrême) :
+
+  | Mémoire | 16 Go | 24 Go | 48 Go | 80 Go | 102 Go |
+  |---|---|---|---|---|---|
+  | Places | 2 | 3 | 8 | 16 | 20 |
+
+  Entre deux tailles, interpolé et arrondi en dessous (32 Go → 4, 40 Go → 7) ; jamais plus
+  que ce que la mémoire permet. C'est lui qui décide, pas le serveur, et la règle est la
+  même chez les trois hébergeurs. Il garde ses places pleines.
 - **Une carte pleine ne va pas plus vite.** Mesuré sur deux cartes de 48 Go : k jobs en
   même temps sur une carte rendent ×1 ; ×1,12 à 2 ; ×1,20 à 4 ; ×1,23 à 6 et au-delà. Les
   places achètent de la capacité d'accueil, pas du débit : le bot compte le débit d'une
@@ -106,7 +111,7 @@ En croisière, la règle du bot est de **garder la file courte au meilleur coût
 - **Modal, tant qu'il a du crédit** : la file doit rester à zéro. Le bot ouvre autant de
   conteneurs qu'il faut pour que ce qui attend soit vidé dans le temps d'un démarrage après
   leur arrivée (≈ 1 min, jamais moins qu'un job), et **jamais plus de places libres que de jobs
-  en file** : un L4 tient 5 places, donc 5 jobs → 1 conteneur, 12 jobs → 3. Le crédit est dépensé dès qu'il y a du travail,
+  en file** : un L4 tient 3 places, donc 3 jobs → 1 conteneur, 4 jobs → 2, 12 jobs → 4. Le crédit est dépensé dès qu'il y a du travail,
   sans réserve.
 - **RunPod et Vast** : on démarre une machine de plus seulement si, **à son arrivée
   prévue**, trois conditions tiennent :
@@ -202,7 +207,7 @@ peut exécuter, quel que soit le nom de la carte :
 |---|---|---|
 | capacité de calcul | ≥ 7,5 | les roues torch 2.7.1 + CUDA 12.8 (un V100 est refusé, même sur pilote récent) |
 | pilote `cuda_max_good` | ≥ 12.8 | l'image embarque CUDA 12.8 |
-| VRAM par carte | ≥ 16 Go | la mémoire décide du nombre de places (16 Go → 3, 24 Go → 5, 48 Go → 10) ; le débit, lui, suit la courbe mesurée |
+| VRAM par carte | ≥ 16 Go | la mémoire décide du nombre de places (16 Go → 2, 24 Go → 3, 48 Go → 8, 80 Go → 16) ; le débit, lui, suit la courbe mesurée |
 | cœurs CPU | plancher 4, puis facteur de coût | le décodage et l'encodage tournent sur CPU ; en dessous la carte dort |
 | débit réseau | plancher 500 Mb/s, puis facteur de coût | 13 Mo par job (0,2 s à 500 Mb/s) ; le tirage de l'image passe de 20 s à 85 s, c'est du temps de démarrage, pas de la qualité |
 | disque | ≥ 15 Go | l'image fait 5,3 Go compressés |
@@ -259,9 +264,12 @@ de 8 cartes à 0,12 $/h la carte, 10 machines Vast au plus) :
 | Demande | Machines louées | Payé | Attente max |
 |---|---|---|---|
 | 20 jobs | 1 à 4 cartes | 0,04 $ | 14 min (dont 10 de réveil) |
-| 60 jobs | 1 à 8 cartes + 1 à 2 cartes | 0,11 $ | 6 min |
-| 150 jobs | 3 à 8 cartes | 0,26 $ | 7 min |
-| 300 jobs | 3 à 8 cartes d'abord, puis le reste jusqu'au plafond | 0,48 $ | 8 min |
+| 60 jobs | 1 à 8 cartes + 1 à 2 cartes | 0,10 $ | 5 min |
+| 150 jobs | 3 à 8 cartes + 1 à 1 carte | 0,26 $ | 5 min |
+| 300 jobs | 3 à 8 cartes d'abord, puis le reste jusqu'au plafond | 0,48 $ | 7 min |
+
+Face à la règle naïve (une machine RunPod par 40 jobs) : 0 $ contre 4,03 $ pour 100 jobs avec
+le crédit Modal, 2,71 $ contre 11,01 $ pour 300 jobs sur RunPod seul.
  `SPARK_GPU_COUT_FIXE_MACHINE_USD` est le curseur : à 0, le
 bot ne regarde plus que le prix par carte.
 
